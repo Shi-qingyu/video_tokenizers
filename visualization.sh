@@ -6,4 +6,5 @@ python3 visualize_tokenizer_temporal_dynamics.py \
   --log-file outputs/temporal_viz/run.log \
   --jepa-checkpoint ./facebook/vjepa2-vitl-fpc64-256 \
   --dino-weights ./facebook/dinov3-vitl16-pretrain-lvd1689m \
-  --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct
+  --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct \
+  --models qwenvit
