@@ -15,6 +15,7 @@ import atexit
 from concurrent.futures import ProcessPoolExecutor
 import json
 import math
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -24,8 +25,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data.distributed import DistributedSampler
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -148,6 +152,45 @@ def choose_device(device_arg: Optional[str]) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def is_distributed_run() -> bool:
+    return int(os.environ.get("WORLD_SIZE", "1")) > 1
+
+
+def get_rank() -> int:
+    return dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+
+
+def get_world_size() -> int:
+    return dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+
+
+def is_main_process() -> bool:
+    return get_rank() == 0
+
+
+def setup_distributed(device_arg: Optional[str]) -> torch.device:
+    if not is_distributed_run():
+        return choose_device(device_arg)
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+        backend = "nccl"
+    else:
+        device = torch.device("cpu")
+        backend = "gloo"
+
+    if not dist.is_initialized():
+        dist.init_process_group(backend=backend)
+    return device
+
+
+def cleanup_distributed() -> None:
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
+
+
 def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -159,7 +202,16 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def resolve_ranked_log_file(log_file: Path) -> Path:
+    world_size = get_world_size()
+    rank = get_rank()
+    if world_size <= 1:
+        return log_file
+    return log_file.with_name(f"{log_file.stem}.rank{rank}{log_file.suffix}")
+
+
 def setup_logging(log_file: Path) -> None:
+    log_file = resolve_ranked_log_file(log_file)
     ensure_dir(log_file.parent)
     handle = log_file.open("a", encoding="utf-8", buffering=1)
     stdout = TeeStream(sys.__stdout__, handle)
@@ -471,6 +523,8 @@ class QwenVisualWrapper(nn.Module):
 
 
 def maybe_wrap_dataparallel(module: nn.Module, device: torch.device) -> nn.Module:
+    if dist.is_available() and dist.is_initialized():
+        return module
     if device.type == "cuda" and torch.cuda.device_count() > 1:
         print(f"[multi-gpu] enabling DataParallel across {torch.cuda.device_count()} GPUs")
         return nn.DataParallel(module)
@@ -887,8 +941,12 @@ def precompute_features(
     features: List[torch.Tensor] = []
     labels: List[torch.Tensor] = []
     kept_paths: List[Path] = []
+    kept_indices: List[int] = []
 
-    total = len(samples)
+    rank = get_rank()
+    world_size = get_world_size()
+    indexed_samples = [(idx, sample) for idx, sample in enumerate(samples) if idx % world_size == rank]
+    total = len(indexed_samples)
     max_workers = max(int(feature_num_workers), 0)
     executor: Optional[ProcessPoolExecutor] = None
     if max_workers > 1:
@@ -896,13 +954,14 @@ def precompute_features(
 
     try:
         for start_idx in range(0, total, max(feature_batch_size, 1)):
-            batch_samples = list(samples[start_idx : start_idx + max(feature_batch_size, 1)])
+            batch_with_indices = list(indexed_samples[start_idx : start_idx + max(feature_batch_size, 1)])
+            batch_samples = [sample for _, sample in batch_with_indices]
             batch_paths = [sample.video_path for sample in batch_samples]
             try:
                 batch_features = extractor.extract_batch(batch_paths, executor=executor)
             except Exception as exc:
-                print(f"[{extractor.name}] batch failed at start={start_idx}: {exc}")
-                for sample in batch_samples:
+                print(f"[{extractor.name}] rank={rank} batch failed at start={start_idx}: {exc}")
+                for global_idx, sample in batch_with_indices:
                     try:
                         feature = extractor.extract(sample.video_path)
                     except Exception as inner_exc:
@@ -911,7 +970,8 @@ def precompute_features(
                     features.append(feature)
                     labels.append(sample.labels)
                     kept_paths.append(sample.video_path)
-                print(f"[{extractor.name}] extracted up to {min(start_idx + len(batch_samples), total)}/{total}")
+                    kept_indices.append(global_idx)
+                print(f"[{extractor.name}] rank={rank} extracted up to {min(start_idx + len(batch_samples), total)}/{total}")
                 continue
 
             if len(batch_features) != len(batch_samples):
@@ -920,18 +980,32 @@ def precompute_features(
                     f"{len(batch_features)} features for {len(batch_samples)} samples"
                 )
 
-            for sample, feature in zip(batch_samples, batch_features):
+            for (global_idx, sample), feature in zip(batch_with_indices, batch_features):
                 features.append(feature)
                 labels.append(sample.labels)
                 kept_paths.append(sample.video_path)
+                kept_indices.append(global_idx)
 
-            print(f"[{extractor.name}] extracted {min(start_idx + len(batch_samples), total)}/{total}")
+            print(f"[{extractor.name}] rank={rank} extracted {min(start_idx + len(batch_samples), total)}/{total}")
     finally:
         if executor is not None:
             executor.shutdown()
 
     if not features:
         raise RuntimeError(f"No usable features extracted for {extractor.name}")
+
+    local_items = []
+    for global_idx, feature, label, path in zip(kept_indices, features, labels, kept_paths):
+        local_items.append((global_idx, feature.numpy(), label.numpy(), str(path)))
+
+    if dist.is_available() and dist.is_initialized():
+        gathered_items: List[List[Tuple[int, np.ndarray, np.ndarray, str]]] = [None] * world_size  # type: ignore[list-item]
+        dist.all_gather_object(gathered_items, local_items)
+        merged_items = [item for sublist in gathered_items for item in sublist]
+        merged_items.sort(key=lambda x: x[0])
+        features = [torch.from_numpy(item[1]).float() for item in merged_items]
+        labels = [torch.from_numpy(item[2]).float() for item in merged_items]
+        kept_paths = [Path(item[3]) for item in merged_items]
 
     return torch.stack(features, dim=0), torch.stack(labels, dim=0), kept_paths
 
@@ -946,20 +1020,35 @@ def train_linear_probe(
 ) -> Tuple[nn.Module, Dict[str, Any]]:
     feature_dim = int(train_features.shape[1])
     probe = nn.Linear(feature_dim, len(LABEL_NAMES)).to(device)
-    if device.type == "cuda" and torch.cuda.device_count() > 1:
+    if dist.is_available() and dist.is_initialized():
+        probe = DDP(
+            probe,
+            device_ids=[device.index] if device.type == "cuda" and device.index is not None else None,
+            output_device=device.index if device.type == "cuda" and device.index is not None else None,
+        )
+    elif device.type == "cuda" and torch.cuda.device_count() > 1:
         probe = nn.DataParallel(probe)
     optimizer = torch.optim.AdamW(probe.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = nn.BCEWithLogitsLoss()
 
+    train_dataset = TensorDataset(train_features, train_labels)
+    train_sampler = None
+    shuffle = True
+    if dist.is_available() and dist.is_initialized():
+        train_sampler = DistributedSampler(train_dataset, shuffle=True, drop_last=False)
+        shuffle = False
     train_loader = DataLoader(
-        TensorDataset(train_features, train_labels),
+        train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=train_sampler,
         num_workers=args.num_workers,
     )
 
     probe.train()
     for epoch_idx in range(args.epochs):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch_idx)
         running_loss = 0.0
         running_count = 0
         for batch_features, batch_labels in train_loader:
@@ -989,14 +1078,27 @@ def evaluate_linear_probe(
     device: torch.device,
 ) -> Dict[str, Any]:
     probe.eval()
-    logits = probe(features.to(device))
-    probs = torch.sigmoid(logits).cpu()
+    rank = get_rank()
+    world_size = get_world_size()
+    local_features = features[rank::world_size].to(device)
+    local_labels = labels[rank::world_size].to(device)
+    logits = probe(local_features)
+    probs = torch.sigmoid(logits)
     preds = (probs >= 0.5).float()
-    labels = labels.cpu()
 
-    per_dim_accuracy = (preds == labels).float().mean(dim=0)
-    exact_match = (preds == labels).all(dim=1).float().mean()
+    correct_per_dim = (preds == local_labels).float().sum(dim=0)
+    total_per_dim = torch.full_like(correct_per_dim, float(local_labels.shape[0]))
+    exact_correct = (preds == local_labels).all(dim=1).float().sum()
+    total_samples = torch.tensor(float(local_labels.shape[0]), device=device)
 
+    if dist.is_available() and dist.is_initialized():
+        dist.all_reduce(correct_per_dim, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_per_dim, op=dist.ReduceOp.SUM)
+        dist.all_reduce(exact_correct, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
+
+    per_dim_accuracy = (correct_per_dim / total_per_dim.clamp(min=1.0)).cpu()
+    exact_match = (exact_correct / total_samples.clamp(min=1.0)).cpu()
     results = {
         "overall_mean_accuracy": float(per_dim_accuracy.mean().item()),
         "exact_match_accuracy": float(exact_match.item()),
@@ -1048,7 +1150,7 @@ def load_split(
 
 
 def run_single_model(model_type: str, args: argparse.Namespace, device: torch.device, output_dir: Path) -> None:
-    print(f"\n=== Running linear probe for {model_type} ===")
+    print(f"\n=== Running linear probe for {model_type} (rank={get_rank()}/{get_world_size()}) ===")
     extractor = build_feature_extractor(model_type, args, device)
 
     train_samples = load_split(
@@ -1087,28 +1189,40 @@ def run_single_model(model_type: str, args: argparse.Namespace, device: torch.de
         device=device,
     )
 
-    state_dict = probe.module.state_dict() if isinstance(probe, nn.DataParallel) else probe.state_dict()
-    torch.save(state_dict, output_dir / f"{model_type}_linear_probe.pt")
-    save_results(output_dir, model_type, metrics, len(train_features), len(eval_features))
-    print_metrics(model_type, metrics)
+    if is_main_process():
+        state_dict = probe.module.state_dict() if isinstance(probe, (nn.DataParallel, DDP)) else probe.state_dict()
+        torch.save(state_dict, output_dir / f"{model_type}_linear_probe.pt")
+        save_results(output_dir, model_type, metrics, len(train_features), len(eval_features))
+        print_metrics(model_type, metrics)
 
 
 def main() -> None:
     args = parse_args()
+    device = setup_distributed(args.device)
     output_dir = Path(args.output_dir).expanduser().resolve()
     ensure_dir(output_dir)
     log_file = Path(args.log_file).expanduser().resolve() if args.log_file else output_dir / "train_video_linear_probe.log"
     setup_logging(log_file)
     set_seed(args.seed)
-    device = choose_device(args.device)
+
+    if is_distributed_run():
+        print(
+            f"[ddp] initialized rank={get_rank()} world_size={get_world_size()} "
+            f"local_rank={os.environ.get('LOCAL_RANK')} device={device}"
+        )
+    else:
+        print(f"[device] using {device}")
 
     if args.model_type == "all":
         model_types = ["jepa", "dino", "qwenvit"]
     else:
         model_types = [args.model_type]
 
-    for model_type in model_types:
-        run_single_model(model_type, args, device, output_dir)
+    try:
+        for model_type in model_types:
+            run_single_model(model_type, args, device, output_dir)
+    finally:
+        cleanup_distributed()
 
 
 if __name__ == "__main__":
