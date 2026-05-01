@@ -43,6 +43,7 @@ DINOV3_ROOT = REPO_ROOT / "dinov3"
 VJEPA2_ROOT = REPO_ROOT / "vjepa2"
 QWEN_FINETUNE_ROOT = REPO_ROOT / "Qwen3-VL" / "qwen-vl-finetune"
 LOCAL_FACEBOOK_ROOT = REPO_ROOT / "facebook"
+LOCAL_QWEN_ROOT = REPO_ROOT / "Qwen"
 
 for extra_path in (DINOV3_ROOT, VJEPA2_ROOT):
     extra_path_str = str(extra_path)
@@ -61,6 +62,7 @@ def _default_existing_dir(path: Path) -> Optional[str]:
 
 DEFAULT_DINO_REF = _default_existing_dir(LOCAL_FACEBOOK_ROOT / "dinov3-vitl16-pretrain-lvd1689m")
 DEFAULT_JEPA_REF = _default_existing_dir(LOCAL_FACEBOOK_ROOT / "vjepa2-vitl-fpc64-256")
+DEFAULT_QWEN_REF = _default_existing_dir(LOCAL_QWEN_ROOT / "Qwen3-VL-2B-Instruct")
 
 
 def get_matplotlib_pyplot():
@@ -196,7 +198,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--qwen-model-path",
         type=str,
-        default=None,
+        default=DEFAULT_QWEN_REF,
         help="Path or HF id of a Qwen-VL model directory.",
     )
     parser.add_argument(
