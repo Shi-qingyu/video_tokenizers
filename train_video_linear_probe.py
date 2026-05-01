@@ -1,0 +1,735 @@
+#!/usr/bin/env python3
+"""
+Train a frozen-backbone linear probe for 7 binary video quality dimensions.
+
+The script reads the RL-style video annotations, parses the assistant answer
+into 7 Yes/No labels, freezes a selected visual tokenizer, precomputes one
+pooled feature vector per video, trains a single linear layer for one epoch,
+and evaluates accuracy on the eval split.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+DINOV3_ROOT = REPO_ROOT / "dinov3"
+VJEPA2_ROOT = REPO_ROOT / "vjepa2"
+QWEN_FINETUNE_ROOT = REPO_ROOT / "Qwen3-VL" / "qwen-vl-finetune"
+
+for extra_path in (DINOV3_ROOT, VJEPA2_ROOT):
+    extra_path_str = str(extra_path)
+    if extra_path.exists() and extra_path_str not in sys.path:
+        sys.path.insert(0, extra_path_str)
+
+
+LABEL_NAMES = [
+    "Video Quality",
+    "Subject Movement",
+    "Physical Interaction",
+    "Cause-Effect",
+    "Subject Existence",
+    "Object Existence",
+    "Subject-Object Interaction",
+]
+LABEL_KEY_MAP = {name.lower(): idx for idx, name in enumerate(LABEL_NAMES)}
+MODEL_TYPES = ("jepa", "dino", "qwenvit", "all")
+
+IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
+
+
+@dataclass
+class ProbeSample:
+    video_path: Path
+    labels: torch.Tensor
+    raw_answer: str
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-type", type=str, default="all", choices=list(MODEL_TYPES))
+    parser.add_argument("--output-dir", type=str, required=True)
+    parser.add_argument("--device", type=str, default=None)
+
+    parser.add_argument("--train-dataset-use", type=str, default="videoreward")
+    parser.add_argument("--eval-dataset-use", type=str, default="videoreward_eval")
+    parser.add_argument("--train-annotation-path", type=str, default=None)
+    parser.add_argument("--train-data-root", type=str, default=None)
+    parser.add_argument("--eval-annotation-path", type=str, default=None)
+    parser.add_argument("--eval-data-root", type=str, default=None)
+    parser.add_argument("--max-train-samples", type=int, default=None)
+    parser.add_argument("--max-eval-samples", type=int, default=None)
+
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=42)
+
+    parser.add_argument("--dino-arch", type=str, default="dinov3_vitb16")
+    parser.add_argument("--dino-weights", type=str, default=None)
+    parser.add_argument("--dino-input-size", type=int, default=224)
+    parser.add_argument("--dino-short-side", type=int, default=256)
+    parser.add_argument("--dino-num-frames", type=int, default=16)
+
+    parser.add_argument("--jepa-arch", type=str, default="vit_large_rope")
+    parser.add_argument("--jepa-checkpoint", type=str, default=None)
+    parser.add_argument("--jepa-input-size", type=int, default=256)
+    parser.add_argument("--jepa-short-side", type=int, default=292)
+    parser.add_argument("--jepa-num-frames", type=int, default=16)
+    parser.add_argument("--jepa-tubelet-size", type=int, default=2)
+
+    parser.add_argument("--qwen-model-path", type=str, default=None)
+    parser.add_argument("--qwen-force-frames", type=int, default=None)
+    return parser.parse_args()
+
+
+def choose_device(device_arg: Optional[str]) -> torch.device:
+    if device_arg:
+        return torch.device(device_arg)
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def set_seed(seed: int) -> None:
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def read_json_or_jsonl(path: Path) -> List[Dict[str, Any]]:
+    if path.suffix == ".jsonl":
+        data: List[Dict[str, Any]] = []
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    data.append(json.loads(line))
+        return data
+
+    with path.open("r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    if isinstance(loaded, list):
+        return loaded
+    raise ValueError(f"Unsupported annotation format in {path}")
+
+
+def flatten_annotation_items(items: Sequence[Any], base_path: Path) -> List[Dict[str, Any]]:
+    flattened: List[Dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, list):
+            flattened.extend(flatten_annotation_items(item, base_path))
+            continue
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        copied["data_path"] = str(base_path)
+        flattened.append(copied)
+    return flattened
+
+
+def load_items_from_dataset_use(dataset_use: str) -> List[Dict[str, Any]]:
+    from dataset import data_list
+
+    dataset_names = [name.strip() for name in dataset_use.split(",") if name.strip()]
+    configs = data_list(dataset_names)
+    all_items: List[Dict[str, Any]] = []
+    for config in configs:
+        annotation_path = (REPO_ROOT / config["annotation_path"]).resolve()
+        data_root = (REPO_ROOT / config["data_path"]).resolve()
+        items = read_json_or_jsonl(annotation_path)
+        all_items.extend(flatten_annotation_items(items, data_root))
+    return all_items
+
+
+def load_items_from_annotation(annotation_path: str, data_root: str) -> List[Dict[str, Any]]:
+    anno_path = Path(annotation_path).expanduser().resolve()
+    root = Path(data_root).expanduser().resolve()
+    items = read_json_or_jsonl(anno_path)
+    return flatten_annotation_items(items, root)
+
+
+def parse_answer_labels(answer_text: str) -> torch.Tensor:
+    match = re.search(r"<answer>(.*?)</answer>", answer_text, flags=re.DOTALL | re.IGNORECASE)
+    content = match.group(1) if match else answer_text
+    labels = torch.full((len(LABEL_NAMES),), -1.0, dtype=torch.float32)
+
+    # Matches patterns like "Video Quality: Yes."
+    pattern = re.compile(r"([A-Za-z\- ]+?)\s*:\s*(Yes|No)\b", flags=re.IGNORECASE)
+    for key, value in pattern.findall(content):
+        normalized_key = " ".join(key.strip().lower().split())
+        if normalized_key in LABEL_KEY_MAP:
+            labels[LABEL_KEY_MAP[normalized_key]] = 1.0 if value.lower() == "yes" else 0.0
+
+    if (labels < 0).any():
+        missing = [LABEL_NAMES[idx] for idx in torch.where(labels < 0)[0].tolist()]
+        raise ValueError(f"Failed to parse labels for dimensions: {missing}")
+    return labels
+
+
+def build_probe_samples(items: Sequence[Dict[str, Any]], max_samples: Optional[int] = None) -> List[ProbeSample]:
+    samples: List[ProbeSample] = []
+    for item in items:
+        videos = item.get("videos") or item.get("video")
+        if not videos:
+            continue
+        video_rel = videos[0] if isinstance(videos, list) else videos
+        conversations = item.get("conversations", [])
+        assistant_turns = [turn for turn in conversations if turn.get("from") == "gpt"]
+        if not assistant_turns:
+            continue
+
+        answer_text = assistant_turns[-1]["value"]
+        try:
+            labels = parse_answer_labels(answer_text)
+        except Exception:
+            continue
+
+        data_path = Path(item.get("data_path", "")).expanduser().resolve()
+        video_path = (data_path / video_rel).resolve()
+        if not video_path.exists():
+            continue
+
+        samples.append(ProbeSample(video_path=video_path, labels=labels, raw_answer=answer_text))
+        if max_samples is not None and len(samples) >= max_samples:
+            break
+    return samples
+
+
+def _read_video_with_decord(video_path: Path) -> Tuple[np.ndarray, float]:
+    from decord import VideoReader, cpu
+
+    vr = VideoReader(str(video_path), ctx=cpu(0))
+    fps = float(vr.get_avg_fps())
+    frames = vr.get_batch(list(range(len(vr)))).asnumpy()
+    return frames, fps
+
+
+def _read_video_with_torchvision(video_path: Path) -> Tuple[np.ndarray, float]:
+    from torchvision.io import read_video
+
+    frames, _, info = read_video(str(video_path), pts_unit="sec")
+    fps = float(info.get("video_fps", 0.0))
+    return frames.numpy(), fps
+
+
+def _read_video_with_imageio(video_path: Path) -> Tuple[np.ndarray, float]:
+    import imageio.v3 as iio
+
+    frames = iio.imread(str(video_path))
+    metadata = iio.immeta(str(video_path))
+    fps = float(metadata.get("fps", 0.0))
+    return frames, fps
+
+
+def load_video(video_path: Path) -> Tuple[np.ndarray, float]:
+    readers = (_read_video_with_decord, _read_video_with_torchvision, _read_video_with_imageio)
+    errors: List[str] = []
+    for reader in readers:
+        try:
+            frames, fps = reader(video_path)
+            if frames.ndim != 4 or frames.shape[-1] != 3:
+                raise ValueError(f"Expected [T, H, W, 3], got {frames.shape}")
+            return frames, fps
+        except Exception as exc:
+            errors.append(f"{reader.__name__}: {exc}")
+    raise RuntimeError(f"Failed to read video {video_path}:\n" + "\n".join(errors))
+
+
+def sample_video_uniform(video_path: Path, num_frames: int) -> Tuple[np.ndarray, np.ndarray]:
+    frames, fps = load_video(video_path)
+    total_frames = int(frames.shape[0])
+    if total_frames <= 0:
+        raise ValueError(f"Video has no frames: {video_path}")
+    target_frames = max(1, min(num_frames, total_frames))
+    frame_indices = np.unique(np.linspace(0, total_frames - 1, target_frames, dtype=int))
+    sampled_frames = frames[frame_indices]
+    if fps <= 0:
+        fps = float(target_frames)
+    timestamps = frame_indices.astype(np.float32) / max(fps, 1e-6)
+    return sampled_frames, timestamps
+
+
+def get_torchvision_functional():
+    try:
+        from torchvision.transforms import functional as TF
+    except ImportError as exc:
+        raise ImportError("torchvision is required for video frame preprocessing.") from exc
+    return TF
+
+
+def to_uint8_frame(frame: np.ndarray) -> np.ndarray:
+    if frame.dtype == np.uint8:
+        return frame
+    return np.clip(frame, 0, 255).astype(np.uint8)
+
+
+def frame_to_tensor(frame: np.ndarray) -> torch.Tensor:
+    return torch.from_numpy(to_uint8_frame(frame)).permute(2, 0, 1).float() / 255.0
+
+
+def resize_short_side(frame: torch.Tensor, short_side: int) -> torch.Tensor:
+    TF = get_torchvision_functional()
+    _, h, w = frame.shape
+    if min(h, w) == short_side:
+        return frame
+    scale = short_side / min(h, w)
+    new_h = int(round(h * scale))
+    new_w = int(round(w * scale))
+    return TF.resize(frame, [new_h, new_w], antialias=True)
+
+
+def center_crop_square(frame: torch.Tensor, size: int) -> torch.Tensor:
+    TF = get_torchvision_functional()
+    return TF.center_crop(frame, [size, size])
+
+
+def preprocess_image_frames(frames: np.ndarray, short_side: int, crop_size: int) -> torch.Tensor:
+    processed = []
+    for frame in frames:
+        tensor = frame_to_tensor(frame)
+        tensor = resize_short_side(tensor, short_side)
+        tensor = center_crop_square(tensor, crop_size)
+        tensor = (tensor - IMAGENET_MEAN) / IMAGENET_STD
+        processed.append(tensor)
+    return torch.stack(processed, dim=0)
+
+
+def preprocess_video_clip(frames: np.ndarray, short_side: int, crop_size: int) -> torch.Tensor:
+    return preprocess_image_frames(frames, short_side, crop_size).permute(1, 0, 2, 3)
+
+
+class FeatureExtractor:
+    feature_dim: int
+    name: str
+
+    def extract(self, video_path: Path) -> torch.Tensor:
+        raise NotImplementedError
+
+
+def _load_jepa_state_dict(checkpoint_path: Path) -> Dict[str, torch.Tensor]:
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    if "encoder" in checkpoint:
+        state_dict = checkpoint["encoder"]
+    elif "target_encoder" in checkpoint:
+        state_dict = checkpoint["target_encoder"]
+    elif "ema_encoder" in checkpoint:
+        state_dict = checkpoint["ema_encoder"]
+    else:
+        state_dict = checkpoint
+
+    cleaned: Dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        cleaned[key.replace("module.", "").replace("backbone.", "")] = value
+    return cleaned
+
+
+class JEPAFeatureExtractor(FeatureExtractor):
+    def __init__(self, args: argparse.Namespace, device: torch.device):
+        from src.models import vision_transformer as vit_encoder
+
+        if not hasattr(vit_encoder, args.jepa_arch):
+            raise ValueError(f"Unknown JEPA architecture: {args.jepa_arch}")
+        self.args = args
+        self.device = device
+        self.name = "jepa"
+
+        model = getattr(vit_encoder, args.jepa_arch)(
+            img_size=(args.jepa_input_size, args.jepa_input_size),
+            num_frames=args.jepa_num_frames,
+            tubelet_size=args.jepa_tubelet_size,
+        )
+        if args.jepa_checkpoint:
+            state_dict = _load_jepa_state_dict(Path(args.jepa_checkpoint).expanduser().resolve())
+            msg = model.load_state_dict(state_dict, strict=False)
+            print(f"[JEPA] checkpoint load message: {msg}")
+        else:
+            print("[JEPA] no checkpoint provided, using current initialization")
+
+        self.model = model.to(device).eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        self.feature_dim = int(self.model.embed_dim)
+
+    @torch.inference_mode()
+    def extract(self, video_path: Path) -> torch.Tensor:
+        frames, _ = sample_video_uniform(video_path, self.args.jepa_num_frames)
+        if frames.shape[0] < self.args.jepa_tubelet_size:
+            pad_count = self.args.jepa_tubelet_size - frames.shape[0]
+            pad_frames = np.repeat(frames[-1:], pad_count, axis=0)
+            frames = np.concatenate([frames, pad_frames], axis=0)
+        if frames.shape[0] % self.args.jepa_tubelet_size != 0:
+            usable = (frames.shape[0] // self.args.jepa_tubelet_size) * self.args.jepa_tubelet_size
+            frames = frames[:usable]
+        clip = preprocess_video_clip(
+            frames,
+            short_side=self.args.jepa_short_side,
+            crop_size=self.args.jepa_input_size,
+        ).unsqueeze(0).to(self.device)
+        tokens = self.model(clip)[0]
+        return tokens.mean(dim=0).float().cpu()
+
+
+class DINOFeatureExtractor(FeatureExtractor):
+    def __init__(self, args: argparse.Namespace, device: torch.device):
+        from dinov3.hub import backbones as dino_backbones
+
+        if not hasattr(dino_backbones, args.dino_arch):
+            raise ValueError(f"Unknown DINO architecture: {args.dino_arch}")
+        self.args = args
+        self.device = device
+        self.name = "dino"
+
+        model_kwargs: Dict[str, Any] = {"pretrained": args.dino_weights is None}
+        if args.dino_weights is not None:
+            model_kwargs["pretrained"] = True
+            model_kwargs["weights"] = str(Path(args.dino_weights).expanduser().resolve())
+        self.model = getattr(dino_backbones, args.dino_arch)(**model_kwargs).to(device).eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        self.feature_dim = int(self.model.embed_dim)
+
+    @torch.inference_mode()
+    def extract(self, video_path: Path) -> torch.Tensor:
+        frames, _ = sample_video_uniform(video_path, self.args.dino_num_frames)
+        images = preprocess_image_frames(
+            frames,
+            short_side=self.args.dino_short_side,
+            crop_size=self.args.dino_input_size,
+        ).to(self.device)
+        outputs = self.model.forward_features(images)
+        patch_tokens = outputs["x_norm_patchtokens"]
+        frame_features = patch_tokens.mean(dim=1)
+        return frame_features.mean(dim=0).float().cpu()
+
+
+def _load_qwen_model_and_processor(model_path: str, device: torch.device) -> Tuple[Any, Any]:
+    try:
+        from transformers import (
+            AutoProcessor,
+            Qwen2VLForConditionalGeneration,
+            Qwen2_5_VLForConditionalGeneration,
+            Qwen3VLForConditionalGeneration,
+            Qwen3VLMoeForConditionalGeneration,
+        )
+    except ImportError as exc:
+        raise ImportError("transformers is required for Qwen-ViT probing") from exc
+
+    lower_name = model_path.lower()
+    model_name = Path(model_path.rstrip("/")).name.lower()
+    if "qwen3" in lower_name and "a" in model_name:
+        model_cls = Qwen3VLMoeForConditionalGeneration
+    elif "qwen3" in lower_name:
+        model_cls = Qwen3VLForConditionalGeneration
+    elif "qwen2.5" in lower_name:
+        model_cls = Qwen2_5_VLForConditionalGeneration
+    else:
+        model_cls = Qwen2VLForConditionalGeneration
+
+    processor = AutoProcessor.from_pretrained(model_path)
+    dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    try:
+        model = model_cls.from_pretrained(model_path, dtype=dtype)
+    except TypeError:
+        model = model_cls.from_pretrained(model_path, torch_dtype=dtype)
+    return model.to(device).eval(), processor
+
+
+def _call_qwen_visual(model: Any, pixel_values_videos: torch.Tensor, video_grid_thw: torch.Tensor) -> torch.Tensor:
+    attempts = [
+        lambda: model.visual(pixel_values_videos, grid_thw=video_grid_thw),
+        lambda: model.visual(pixel_values_videos, video_grid_thw=video_grid_thw),
+        lambda: model.visual(pixel_values=pixel_values_videos, grid_thw=video_grid_thw),
+        lambda: model.visual(pixel_values=pixel_values_videos, video_grid_thw=video_grid_thw),
+        lambda: model.visual(pixel_values_videos),
+    ]
+    last_error: Optional[Exception] = None
+    for attempt in attempts:
+        try:
+            out = attempt()
+            break
+        except TypeError as exc:
+            last_error = exc
+    else:
+        raise RuntimeError(f"Unable to call Qwen visual encoder: {last_error}")
+
+    if isinstance(out, torch.Tensor):
+        return out
+    if isinstance(out, (list, tuple)):
+        for item in out:
+            if isinstance(item, torch.Tensor):
+                return item
+    if isinstance(out, dict):
+        for key in ("last_hidden_state", "image_embeds", "video_embeds", "hidden_states"):
+            value = out.get(key)
+            if isinstance(value, torch.Tensor):
+                return value
+            if isinstance(value, (list, tuple)) and value and isinstance(value[-1], torch.Tensor):
+                return value[-1]
+    raise TypeError(f"Unsupported Qwen visual output type: {type(out)}")
+
+
+class QwenViTFeatureExtractor(FeatureExtractor):
+    def __init__(self, args: argparse.Namespace, device: torch.device):
+        if not args.qwen_model_path:
+            raise ValueError("--qwen-model-path is required for qwenvit")
+        if QWEN_FINETUNE_ROOT.exists():
+            qwen_path = str(QWEN_FINETUNE_ROOT)
+            if qwen_path not in sys.path:
+                sys.path.insert(0, qwen_path)
+
+        self.args = args
+        self.device = device
+        self.name = "qwenvit"
+        self.model, self.processor = _load_qwen_model_and_processor(args.qwen_model_path, device)
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        self.feature_dim = 0
+
+        if args.qwen_force_frames is not None and hasattr(self.processor, "video_processor"):
+            if hasattr(self.processor.video_processor, "min_frames"):
+                self.processor.video_processor.min_frames = args.qwen_force_frames
+            if hasattr(self.processor.video_processor, "max_frames"):
+                self.processor.video_processor.max_frames = args.qwen_force_frames
+
+    @torch.inference_mode()
+    def extract(self, video_path: Path) -> torch.Tensor:
+        vp_output = self.processor.video_processor(
+            videos=[str(video_path)],
+            return_tensors="pt",
+            return_metadata=True,
+        )
+        pixel_values_videos = vp_output.pixel_values_videos.to(self.device)
+        video_grid_thw = vp_output.video_grid_thw.to(self.device)
+        tokens = _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+        if tokens.ndim == 2:
+            pooled = tokens.mean(dim=0)
+        elif tokens.ndim == 3:
+            pooled = tokens[0].mean(dim=0)
+        else:
+            raise ValueError(f"Unexpected Qwen token shape: {tuple(tokens.shape)}")
+        pooled = pooled.float().cpu()
+        if self.feature_dim <= 0:
+            self.feature_dim = int(pooled.numel())
+        return pooled
+
+
+def build_feature_extractor(model_type: str, args: argparse.Namespace, device: torch.device) -> FeatureExtractor:
+    if model_type == "jepa":
+        return JEPAFeatureExtractor(args, device)
+    if model_type == "dino":
+        return DINOFeatureExtractor(args, device)
+    if model_type == "qwenvit":
+        return QwenViTFeatureExtractor(args, device)
+    raise ValueError(f"Unsupported model type: {model_type}")
+
+
+def precompute_features(
+    extractor: FeatureExtractor,
+    samples: Sequence[ProbeSample],
+) -> Tuple[torch.Tensor, torch.Tensor, List[Path]]:
+    features: List[torch.Tensor] = []
+    labels: List[torch.Tensor] = []
+    kept_paths: List[Path] = []
+
+    total = len(samples)
+    for idx, sample in enumerate(samples):
+        try:
+            feature = extractor.extract(sample.video_path)
+        except Exception as exc:
+            print(f"[{extractor.name}] skip {sample.video_path}: {exc}")
+            continue
+        features.append(feature)
+        labels.append(sample.labels)
+        kept_paths.append(sample.video_path)
+        if (idx + 1) % 20 == 0 or (idx + 1) == total:
+            print(f"[{extractor.name}] extracted {idx + 1}/{total}")
+
+    if not features:
+        raise RuntimeError(f"No usable features extracted for {extractor.name}")
+
+    return torch.stack(features, dim=0), torch.stack(labels, dim=0), kept_paths
+
+
+def train_linear_probe(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor,
+    eval_features: torch.Tensor,
+    eval_labels: torch.Tensor,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> Tuple[nn.Module, Dict[str, Any]]:
+    feature_dim = int(train_features.shape[1])
+    probe = nn.Linear(feature_dim, len(LABEL_NAMES)).to(device)
+    optimizer = torch.optim.AdamW(probe.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    criterion = nn.BCEWithLogitsLoss()
+
+    train_loader = DataLoader(
+        TensorDataset(train_features, train_labels),
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+    )
+
+    probe.train()
+    for epoch_idx in range(args.epochs):
+        running_loss = 0.0
+        running_count = 0
+        for batch_features, batch_labels in train_loader:
+            batch_features = batch_features.to(device)
+            batch_labels = batch_labels.to(device)
+            logits = probe(batch_features)
+            loss = criterion(logits, batch_labels)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += float(loss.item()) * int(batch_features.size(0))
+            running_count += int(batch_features.size(0))
+
+        epoch_loss = running_loss / max(running_count, 1)
+        print(f"epoch={epoch_idx + 1} train_loss={epoch_loss:.6f}")
+
+    metrics = evaluate_linear_probe(probe, eval_features, eval_labels, device)
+    return probe, metrics
+
+
+@torch.inference_mode()
+def evaluate_linear_probe(
+    probe: nn.Module,
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    device: torch.device,
+) -> Dict[str, Any]:
+    probe.eval()
+    logits = probe(features.to(device))
+    probs = torch.sigmoid(logits).cpu()
+    preds = (probs >= 0.5).float()
+    labels = labels.cpu()
+
+    per_dim_accuracy = (preds == labels).float().mean(dim=0)
+    exact_match = (preds == labels).all(dim=1).float().mean()
+
+    results = {
+        "overall_mean_accuracy": float(per_dim_accuracy.mean().item()),
+        "exact_match_accuracy": float(exact_match.item()),
+        "per_dimension_accuracy": {
+            label_name: float(per_dim_accuracy[idx].item()) for idx, label_name in enumerate(LABEL_NAMES)
+        },
+    }
+    return results
+
+
+def save_results(
+    output_dir: Path,
+    model_type: str,
+    metrics: Dict[str, Any],
+    train_count: int,
+    eval_count: int,
+) -> None:
+    payload = {
+        "model_type": model_type,
+        "train_samples": train_count,
+        "eval_samples": eval_count,
+        **metrics,
+    }
+    with (output_dir / f"{model_type}_metrics.json").open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def print_metrics(model_type: str, metrics: Dict[str, Any]) -> None:
+    print(f"\n[{model_type}] eval results")
+    print(f"overall_mean_accuracy={metrics['overall_mean_accuracy']:.4f}")
+    print(f"exact_match_accuracy={metrics['exact_match_accuracy']:.4f}")
+    for name, value in metrics["per_dimension_accuracy"].items():
+        print(f"{name}: {value:.4f}")
+
+
+def load_split(
+    dataset_use: str,
+    annotation_path: Optional[str],
+    data_root: Optional[str],
+    max_samples: Optional[int],
+) -> List[ProbeSample]:
+    if annotation_path:
+        if not data_root:
+            raise ValueError("When annotation_path is set, data_root must also be provided.")
+        items = load_items_from_annotation(annotation_path, data_root)
+    else:
+        items = load_items_from_dataset_use(dataset_use)
+    return build_probe_samples(items, max_samples=max_samples)
+
+
+def run_single_model(model_type: str, args: argparse.Namespace, device: torch.device, output_dir: Path) -> None:
+    print(f"\n=== Running linear probe for {model_type} ===")
+    extractor = build_feature_extractor(model_type, args, device)
+
+    train_samples = load_split(
+        dataset_use=args.train_dataset_use,
+        annotation_path=args.train_annotation_path,
+        data_root=args.train_data_root,
+        max_samples=args.max_train_samples,
+    )
+    eval_samples = load_split(
+        dataset_use=args.eval_dataset_use,
+        annotation_path=args.eval_annotation_path,
+        data_root=args.eval_data_root,
+        max_samples=args.max_eval_samples,
+    )
+    print(f"[{model_type}] train samples={len(train_samples)} eval samples={len(eval_samples)}")
+
+    train_features, train_labels, _ = precompute_features(extractor, train_samples)
+    eval_features, eval_labels, _ = precompute_features(extractor, eval_samples)
+
+    probe, metrics = train_linear_probe(
+        train_features=train_features,
+        train_labels=train_labels,
+        eval_features=eval_features,
+        eval_labels=eval_labels,
+        args=args,
+        device=device,
+    )
+
+    torch.save(probe.state_dict(), output_dir / f"{model_type}_linear_probe.pt")
+    save_results(output_dir, model_type, metrics, len(train_features), len(eval_features))
+    print_metrics(model_type, metrics)
+
+
+def main() -> None:
+    args = parse_args()
+    set_seed(args.seed)
+    device = choose_device(args.device)
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    ensure_dir(output_dir)
+
+    if args.model_type == "all":
+        model_types = ["jepa", "dino", "qwenvit"]
+    else:
+        model_types = [args.model_type]
+
+    for model_type in model_types:
+        run_single_model(model_type, args, device, output_dir)
+
+
+if __name__ == "__main__":
+    main()
