@@ -1,0 +1,767 @@
+[logging] writing combined stdout/stderr to /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/linear_probe_qwenvit/run.log
+[logging] started at 2026-05-01T23:49:30
+[logging] command: train_video_linear_probe.py --model-type qwenvit --train-annotation-path data/train_t_polished_v3.json --train-data-root ./data --eval-annotation-path data/eval_polished_v3.json --eval-data-root ./data --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct --output-dir outputs/linear_probe_qwenvit --log-file outputs/linear_probe_qwenvit/run.log --epochs 1
+
+=== Running linear probe for qwenvit ===
+[qwenvit] train samples=89194 eval samples=769
+[qwenvit] extracted 20/89194
+[qwenvit] extracted 40/89194
+[qwenvit] extracted 60/89194
+[qwenvit] extracted 80/89194
+[qwenvit] extracted 100/89194
+[qwenvit] extracted 120/89194
+[qwenvit] extracted 140/89194
+[qwenvit] extracted 160/89194
+[qwenvit] extracted 180/89194
+[qwenvit] extracted 200/89194
+[qwenvit] extracted 220/89194
+[qwenvit] extracted 240/89194
+[qwenvit] extracted 260/89194
+[qwenvit] extracted 280/89194
+[qwenvit] extracted 300/89194
+[qwenvit] extracted 320/89194
+[qwenvit] extracted 340/89194
+[qwenvit] extracted 360/89194
+[qwenvit] extracted 380/89194
+[qwenvit] extracted 400/89194
+[qwenvit] extracted 420/89194
+[qwenvit] extracted 440/89194
+[qwenvit] extracted 460/89194
+[qwenvit] extracted 480/89194
+[qwenvit] extracted 500/89194
+[qwenvit] extracted 520/89194
+[qwenvit] extracted 540/89194
+[qwenvit] extracted 560/89194
+[qwenvit] extracted 580/89194
+[qwenvit] extracted 600/89194
+[qwenvit] extracted 620/89194
+[qwenvit] extracted 640/89194
+[qwenvit] extracted 660/89194
+[qwenvit] extracted 680/89194
+[qwenvit] extracted 700/89194
+[qwenvit] extracted 720/89194
+[qwenvit] extracted 740/89194
+[qwenvit] extracted 760/89194
+[qwenvit] extracted 780/89194
+[qwenvit] extracted 800/89194
+[qwenvit] extracted 820/89194
+[qwenvit] extracted 840/89194
+[qwenvit] extracted 860/89194
+[qwenvit] extracted 880/89194
+[qwenvit] extracted 900/89194
+[qwenvit] extracted 920/89194
+[qwenvit] extracted 940/89194
+[qwenvit] extracted 960/89194
+[qwenvit] extracted 980/89194
+[qwenvit] extracted 1000/89194
+[qwenvit] extracted 1020/89194
+[qwenvit] extracted 1040/89194
+[qwenvit] extracted 1060/89194
+[qwenvit] extracted 1080/89194
+[qwenvit] extracted 1100/89194
+[qwenvit] extracted 1120/89194
+[qwenvit] extracted 1140/89194
+[qwenvit] extracted 1160/89194
+[qwenvit] extracted 1180/89194
+[qwenvit] extracted 1200/89194
+[qwenvit] extracted 1220/89194
+[qwenvit] extracted 1240/89194
+[qwenvit] extracted 1260/89194
+[qwenvit] extracted 1280/89194
+[qwenvit] extracted 1300/89194
+[qwenvit] extracted 1320/89194
+[qwenvit] extracted 1340/89194
+[qwenvit] extracted 1360/89194
+[qwenvit] extracted 1380/89194
+[qwenvit] extracted 1400/89194
+[qwenvit] extracted 1420/89194
+[qwenvit] extracted 1440/89194
+[qwenvit] extracted 1460/89194
+[qwenvit] extracted 1480/89194
+[qwenvit] extracted 1500/89194
+[qwenvit] extracted 1520/89194
+[qwenvit] extracted 1540/89194
+[qwenvit] extracted 1560/89194
+[qwenvit] extracted 1580/89194
+[qwenvit] extracted 1600/89194
+[qwenvit] extracted 1620/89194
+[qwenvit] extracted 1640/89194
+[qwenvit] extracted 1660/89194
+[qwenvit] extracted 1680/89194
+[qwenvit] extracted 1700/89194
+[qwenvit] extracted 1720/89194
+[qwenvit] extracted 1740/89194
+[qwenvit] extracted 1760/89194
+[qwenvit] extracted 1780/89194
+[qwenvit] extracted 1800/89194
+[qwenvit] extracted 1820/89194
+[qwenvit] extracted 1840/89194
+[qwenvit] extracted 1860/89194
+[qwenvit] extracted 1880/89194
+[qwenvit] extracted 1900/89194
+[qwenvit] extracted 1920/89194
+[qwenvit] extracted 1940/89194
+[qwenvit] extracted 1960/89194
+[qwenvit] extracted 1980/89194
+[qwenvit] extracted 2000/89194
+[qwenvit] extracted 2020/89194
+[qwenvit] extracted 2040/89194
+[qwenvit] extracted 2060/89194
+[qwenvit] extracted 2080/89194
+[qwenvit] extracted 2100/89194
+[qwenvit] extracted 2120/89194
+[qwenvit] extracted 2140/89194
+[qwenvit] extracted 2160/89194
+[qwenvit] extracted 2180/89194
+[qwenvit] extracted 2200/89194
+[qwenvit] extracted 2220/89194
+[qwenvit] extracted 2240/89194
+[qwenvit] extracted 2260/89194
+[qwenvit] extracted 2280/89194
+[qwenvit] extracted 2300/89194
+[qwenvit] extracted 2320/89194
+[qwenvit] extracted 2340/89194
+[qwenvit] extracted 2360/89194
+[qwenvit] extracted 2380/89194
+[qwenvit] extracted 2400/89194
+[qwenvit] extracted 2420/89194
+[qwenvit] extracted 2440/89194
+[qwenvit] extracted 2460/89194
+[qwenvit] extracted 2480/89194
+[qwenvit] extracted 2500/89194
+[qwenvit] extracted 2520/89194
+[qwenvit] extracted 2540/89194
+[qwenvit] extracted 2560/89194
+[qwenvit] extracted 2580/89194
+[qwenvit] extracted 2600/89194
+[qwenvit] extracted 2620/89194
+[qwenvit] extracted 2640/89194
+[qwenvit] extracted 2660/89194
+[qwenvit] extracted 2680/89194
+[qwenvit] skip /mnt/bn/xiangtai-training-data-video/sqy/projects/videorewardmodel/data/videos/train_27/27625.mp4: Could not push packet to decoder: Invalid data found when processing input
+[qwenvit] extracted 2700/89194
+[qwenvit] extracted 2720/89194
+[qwenvit] extracted 2740/89194
+[qwenvit] extracted 2760/89194
+[qwenvit] extracted 2780/89194
+[qwenvit] extracted 2800/89194
+[qwenvit] extracted 2820/89194
+[qwenvit] extracted 2840/89194
+[qwenvit] extracted 2860/89194
+[qwenvit] extracted 2880/89194
+[qwenvit] extracted 2900/89194
+[qwenvit] extracted 2920/89194
+[qwenvit] extracted 2940/89194
+[qwenvit] extracted 2960/89194
+[qwenvit] extracted 2980/89194
+[qwenvit] extracted 3000/89194
+[qwenvit] extracted 3020/89194
+[qwenvit] extracted 3040/89194
+[qwenvit] extracted 3060/89194
+[qwenvit] extracted 3080/89194
+[qwenvit] extracted 3100/89194
+[qwenvit] extracted 3120/89194
+[qwenvit] extracted 3140/89194
+[qwenvit] extracted 3160/89194
+[qwenvit] extracted 3180/89194
+[qwenvit] extracted 3200/89194
+[qwenvit] extracted 3220/89194
+[qwenvit] extracted 3240/89194
+[qwenvit] extracted 3260/89194
+[qwenvit] extracted 3280/89194
+[qwenvit] extracted 3300/89194
+[qwenvit] extracted 3320/89194
+[qwenvit] extracted 3340/89194
+[qwenvit] extracted 3360/89194
+[qwenvit] extracted 3380/89194
+[qwenvit] extracted 3400/89194
+[qwenvit] extracted 3420/89194
+[qwenvit] extracted 3440/89194
+[qwenvit] extracted 3460/89194
+[qwenvit] extracted 3480/89194
+[qwenvit] extracted 3500/89194
+[qwenvit] extracted 3520/89194
+[qwenvit] extracted 3540/89194
+[qwenvit] extracted 3560/89194
+[qwenvit] extracted 3580/89194
+[qwenvit] extracted 3600/89194
+[qwenvit] extracted 3620/89194
+[qwenvit] extracted 3640/89194
+[qwenvit] extracted 3660/89194
+[qwenvit] extracted 3680/89194
+[qwenvit] extracted 3700/89194
+[qwenvit] extracted 3720/89194
+[qwenvit] extracted 3740/89194
+[qwenvit] extracted 3760/89194
+[qwenvit] extracted 3780/89194
+[qwenvit] extracted 3800/89194
+[qwenvit] extracted 3820/89194
+[qwenvit] extracted 3840/89194
+[qwenvit] extracted 3860/89194
+[qwenvit] extracted 3880/89194
+[qwenvit] extracted 3900/89194
+[qwenvit] extracted 3920/89194
+[qwenvit] extracted 3940/89194
+[qwenvit] extracted 3960/89194
+[qwenvit] extracted 3980/89194
+[qwenvit] extracted 4000/89194
+[qwenvit] extracted 4020/89194
+[qwenvit] extracted 4040/89194
+[qwenvit] extracted 4060/89194
+[qwenvit] extracted 4080/89194
+[qwenvit] extracted 4100/89194
+[qwenvit] extracted 4120/89194
+[qwenvit] extracted 4140/89194
+[qwenvit] extracted 4160/89194
+[qwenvit] extracted 4180/89194
+[qwenvit] extracted 4200/89194
+[qwenvit] extracted 4220/89194
+[qwenvit] extracted 4240/89194
+[qwenvit] extracted 4260/89194
+[qwenvit] extracted 4280/89194
+[qwenvit] extracted 4300/89194
+[qwenvit] extracted 4320/89194
+[qwenvit] extracted 4340/89194
+[qwenvit] extracted 4360/89194
+[qwenvit] extracted 4380/89194
+[qwenvit] extracted 4400/89194
+[qwenvit] extracted 4420/89194
+[qwenvit] extracted 4440/89194
+[qwenvit] extracted 4460/89194
+[qwenvit] extracted 4480/89194
+[qwenvit] extracted 4500/89194
+[qwenvit] extracted 4520/89194
+[qwenvit] extracted 4540/89194
+[qwenvit] extracted 4560/89194
+[qwenvit] extracted 4580/89194
+[qwenvit] extracted 4600/89194
+[qwenvit] extracted 4620/89194
+[qwenvit] extracted 4640/89194
+[qwenvit] extracted 4660/89194
+[qwenvit] extracted 4680/89194
+[qwenvit] extracted 4700/89194
+[qwenvit] extracted 4720/89194
+[qwenvit] extracted 4740/89194
+[qwenvit] extracted 4760/89194
+[qwenvit] extracted 4780/89194
+[qwenvit] extracted 4800/89194
+[qwenvit] extracted 4820/89194
+[qwenvit] extracted 4840/89194
+[qwenvit] extracted 4860/89194
+[qwenvit] extracted 4880/89194
+[qwenvit] extracted 4900/89194
+[qwenvit] extracted 4920/89194
+[qwenvit] extracted 4940/89194
+[qwenvit] extracted 4960/89194
+[qwenvit] extracted 4980/89194
+[qwenvit] extracted 5000/89194
+[qwenvit] extracted 5020/89194
+[qwenvit] extracted 5040/89194
+[qwenvit] extracted 5060/89194
+[qwenvit] extracted 5080/89194
+[qwenvit] extracted 5100/89194
+[qwenvit] extracted 5120/89194
+[qwenvit] extracted 5140/89194
+[qwenvit] extracted 5160/89194
+[qwenvit] extracted 5180/89194
+[qwenvit] extracted 5200/89194
+[qwenvit] extracted 5220/89194
+[qwenvit] extracted 5240/89194
+[qwenvit] extracted 5260/89194
+[qwenvit] extracted 5280/89194
+[qwenvit] extracted 5300/89194
+[qwenvit] extracted 5320/89194
+[qwenvit] extracted 5340/89194
+[qwenvit] extracted 5360/89194
+[qwenvit] extracted 5380/89194
+[qwenvit] extracted 5400/89194
+[qwenvit] extracted 5420/89194
+[qwenvit] extracted 5440/89194
+[qwenvit] extracted 5460/89194
+[qwenvit] extracted 5480/89194
+[qwenvit] extracted 5500/89194
+[qwenvit] extracted 5520/89194
+[qwenvit] extracted 5540/89194
+[qwenvit] extracted 5560/89194
+Traceback (most recent call last):
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 855, in <module>
+    continue
+
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 851, in main
+    try:
+^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 819, in run_single_model
+    if model_type == "dino":
+                             
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 676, in precompute_features
+    except ImportError as exc:
+                      ^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 642, in extract
+    if self.feature_dim <= 0:
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 586, in _call_qwen_visual
+    frames, _ = sample_video_uniform(video_path, self.args.dino_num_frames)
+              ^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 577, in <lambda>
+    model_kwargs["weights"] = str(Path(args.dino_weights).expanduser().resolve())
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 739, in forward
+    hidden_states = blk(
+                    ^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/modeling_layers.py", line 94, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 267, in forward
+    hidden_states = hidden_states + self.attn(
+                                    ^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 226, in forward
+    splits = [
+             ^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 227, in <listcomp>
+    torch.split(tensor, lengths.tolist(), dim=2) for tensor in (query_states, key_states, value_states)
+                        ^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+[logging] writing combined stdout/stderr to /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/linear_probe_qwenvit/run.log
+[logging] started at 2026-05-02T00:46:13
+[logging] command: train_video_linear_probe.py --model-type qwenvit --train-annotation-path data/train_t_polished_v3.json --train-data-root ./data --eval-annotation-path data/eval_polished_v3.json --eval-data-root ./data --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct --output-dir outputs/linear_probe_qwenvit --log-file outputs/linear_probe_qwenvit/run.log --feature-batch-size 4 --feature-num-workers 4 --epochs 1
+
+=== Running linear probe for qwenvit ===
+[qwenvit] train samples=89194 eval samples=769
+[qwenvit] extracted 4/89194
+[qwenvit] extracted 8/89194
+[qwenvit] extracted 12/89194
+[qwenvit] extracted 16/89194
+[qwenvit] extracted 20/89194
+[qwenvit] extracted 24/89194
+[qwenvit] extracted 28/89194
+[qwenvit] extracted 32/89194
+[qwenvit] extracted 36/89194
+[qwenvit] extracted 40/89194
+[qwenvit] extracted 44/89194
+[qwenvit] extracted 48/89194
+[qwenvit] extracted 52/89194
+[qwenvit] extracted 56/89194
+[qwenvit] extracted 60/89194
+[qwenvit] extracted 64/89194
+[qwenvit] extracted 68/89194
+[qwenvit] extracted 72/89194
+[qwenvit] extracted 76/89194
+[qwenvit] extracted 80/89194
+[qwenvit] extracted 84/89194
+[qwenvit] extracted 88/89194
+[qwenvit] extracted 92/89194
+[qwenvit] extracted 96/89194
+[qwenvit] extracted 100/89194
+[qwenvit] extracted 104/89194
+[qwenvit] extracted 108/89194
+[qwenvit] extracted 112/89194
+[qwenvit] extracted 116/89194
+[qwenvit] extracted 120/89194
+[qwenvit] extracted 124/89194
+[qwenvit] extracted 128/89194
+[qwenvit] extracted 132/89194
+[qwenvit] extracted 136/89194
+[qwenvit] extracted 140/89194
+[qwenvit] extracted 144/89194
+[qwenvit] extracted 148/89194
+[qwenvit] extracted 152/89194
+[qwenvit] extracted 156/89194
+[qwenvit] extracted 160/89194
+[qwenvit] extracted 164/89194
+[qwenvit] extracted 168/89194
+[qwenvit] extracted 172/89194
+[qwenvit] extracted 176/89194
+[qwenvit] extracted 180/89194
+[qwenvit] extracted 184/89194
+[qwenvit] extracted 188/89194
+[qwenvit] extracted 192/89194
+[qwenvit] extracted 196/89194
+[qwenvit] extracted 200/89194
+[qwenvit] extracted 204/89194
+[qwenvit] extracted 208/89194
+[qwenvit] extracted 212/89194
+[qwenvit] extracted 216/89194
+[qwenvit] extracted 220/89194
+[qwenvit] extracted 224/89194
+[qwenvit] extracted 228/89194
+[qwenvit] extracted 232/89194
+[qwenvit] extracted 236/89194
+[qwenvit] extracted 240/89194
+[qwenvit] extracted 244/89194
+[qwenvit] extracted 248/89194
+[qwenvit] extracted 252/89194
+[qwenvit] extracted 256/89194
+[qwenvit] extracted 260/89194
+[qwenvit] extracted 264/89194
+[qwenvit] extracted 268/89194
+[qwenvit] extracted 272/89194
+[qwenvit] extracted 276/89194
+[qwenvit] extracted 280/89194
+[qwenvit] extracted 284/89194
+[qwenvit] extracted 288/89194
+[qwenvit] extracted 292/89194
+[qwenvit] extracted 296/89194
+[qwenvit] extracted 300/89194
+[qwenvit] extracted 304/89194
+[qwenvit] extracted 308/89194
+[qwenvit] extracted 312/89194
+[qwenvit] extracted 316/89194
+[qwenvit] extracted 320/89194
+[qwenvit] extracted 324/89194
+[qwenvit] extracted 328/89194
+[qwenvit] extracted 332/89194
+[qwenvit] extracted 336/89194
+[qwenvit] extracted 340/89194
+[qwenvit] extracted 344/89194
+[qwenvit] extracted 348/89194
+[qwenvit] extracted 352/89194
+[qwenvit] extracted 356/89194
+[qwenvit] extracted 360/89194
+[qwenvit] extracted 364/89194
+[qwenvit] extracted 368/89194
+[qwenvit] extracted 372/89194
+[qwenvit] extracted 376/89194
+[qwenvit] extracted 380/89194
+[qwenvit] extracted 384/89194
+[qwenvit] extracted 388/89194
+[qwenvit] extracted 392/89194
+[qwenvit] extracted 396/89194
+[qwenvit] extracted 400/89194
+[qwenvit] extracted 404/89194
+[qwenvit] extracted 408/89194
+[qwenvit] extracted 412/89194
+[qwenvit] extracted 416/89194
+[qwenvit] extracted 420/89194
+[qwenvit] extracted 424/89194
+[qwenvit] extracted 428/89194
+[qwenvit] extracted 432/89194
+[qwenvit] extracted 436/89194
+[qwenvit] extracted 440/89194
+[qwenvit] extracted 444/89194
+[qwenvit] extracted 448/89194
+[qwenvit] extracted 452/89194
+[qwenvit] extracted 456/89194
+[qwenvit] extracted 460/89194
+[qwenvit] extracted 464/89194
+[qwenvit] extracted 468/89194
+[qwenvit] extracted 472/89194
+[qwenvit] extracted 476/89194
+[qwenvit] extracted 480/89194
+[qwenvit] extracted 484/89194
+[qwenvit] extracted 488/89194
+[qwenvit] extracted 492/89194
+[qwenvit] extracted 496/89194
+[qwenvit] extracted 500/89194
+[qwenvit] extracted 504/89194
+[qwenvit] extracted 508/89194
+[qwenvit] extracted 512/89194
+[qwenvit] extracted 516/89194
+[qwenvit] extracted 520/89194
+[qwenvit] extracted 524/89194
+[qwenvit] extracted 528/89194
+[qwenvit] extracted 532/89194
+[qwenvit] extracted 536/89194
+[qwenvit] extracted 540/89194
+[qwenvit] extracted 544/89194
+[qwenvit] extracted 548/89194
+[qwenvit] extracted 552/89194
+[qwenvit] extracted 556/89194
+[qwenvit] extracted 560/89194
+[qwenvit] extracted 564/89194
+[qwenvit] extracted 568/89194
+[qwenvit] extracted 572/89194
+[qwenvit] extracted 576/89194
+[qwenvit] extracted 580/89194
+[qwenvit] extracted 584/89194
+[qwenvit] extracted 588/89194
+[qwenvit] extracted 592/89194
+[qwenvit] extracted 596/89194
+[qwenvit] extracted 600/89194
+[qwenvit] extracted 604/89194
+[qwenvit] extracted 608/89194
+[qwenvit] extracted 612/89194
+[qwenvit] extracted 616/89194
+[qwenvit] extracted 620/89194
+[qwenvit] extracted 624/89194
+[qwenvit] extracted 628/89194
+[qwenvit] extracted 632/89194
+[qwenvit] extracted 636/89194
+[qwenvit] extracted 640/89194
+[qwenvit] extracted 644/89194
+[qwenvit] extracted 648/89194
+[qwenvit] extracted 652/89194
+[qwenvit] extracted 656/89194
+[qwenvit] extracted 660/89194
+[qwenvit] extracted 664/89194
+[qwenvit] extracted 668/89194
+[qwenvit] extracted 672/89194
+[qwenvit] extracted 676/89194
+[qwenvit] extracted 680/89194
+[qwenvit] extracted 684/89194
+[qwenvit] extracted 688/89194
+[qwenvit] extracted 692/89194
+[qwenvit] extracted 696/89194
+[qwenvit] extracted 700/89194
+[qwenvit] extracted 704/89194
+[qwenvit] extracted 708/89194
+[qwenvit] extracted 712/89194
+[qwenvit] extracted 716/89194
+[qwenvit] extracted 720/89194
+[qwenvit] extracted 724/89194
+[qwenvit] extracted 728/89194
+[qwenvit] extracted 732/89194
+[qwenvit] extracted 736/89194
+[qwenvit] extracted 740/89194
+[qwenvit] extracted 744/89194
+[qwenvit] extracted 748/89194
+[qwenvit] extracted 752/89194
+[qwenvit] extracted 756/89194
+[qwenvit] extracted 760/89194
+[qwenvit] extracted 764/89194
+[qwenvit] extracted 768/89194
+[qwenvit] extracted 772/89194
+[qwenvit] extracted 776/89194
+[qwenvit] extracted 780/89194
+[qwenvit] extracted 784/89194
+[qwenvit] extracted 788/89194
+[qwenvit] extracted 792/89194
+[qwenvit] extracted 796/89194
+[qwenvit] extracted 800/89194
+[qwenvit] extracted 804/89194
+[qwenvit] extracted 808/89194
+[qwenvit] extracted 812/89194
+[qwenvit] extracted 816/89194
+[qwenvit] extracted 820/89194
+[qwenvit] extracted 824/89194
+[qwenvit] extracted 828/89194
+[qwenvit] extracted 832/89194
+[qwenvit] extracted 836/89194
+[qwenvit] extracted 840/89194
+[qwenvit] extracted 844/89194
+[qwenvit] extracted 848/89194
+[qwenvit] extracted 852/89194
+[qwenvit] extracted 856/89194
+[qwenvit] extracted 860/89194
+[qwenvit] extracted 864/89194
+[qwenvit] extracted 868/89194
+[qwenvit] extracted 872/89194
+[qwenvit] extracted 876/89194
+[qwenvit] extracted 880/89194
+[qwenvit] extracted 884/89194
+[qwenvit] extracted 888/89194
+[qwenvit] extracted 892/89194
+[qwenvit] extracted 896/89194
+[qwenvit] extracted 900/89194
+[qwenvit] extracted 904/89194
+[qwenvit] extracted 908/89194
+[qwenvit] extracted 912/89194
+[qwenvit] extracted 916/89194
+[qwenvit] extracted 920/89194
+[qwenvit] extracted 924/89194
+[qwenvit] extracted 928/89194
+[qwenvit] extracted 932/89194
+[qwenvit] extracted 936/89194
+[qwenvit] extracted 940/89194
+[qwenvit] extracted 944/89194
+[qwenvit] extracted 948/89194
+[qwenvit] extracted 952/89194
+[qwenvit] extracted 956/89194
+[qwenvit] extracted 960/89194
+[qwenvit] extracted 964/89194
+Traceback (most recent call last):
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 1057, in <module>
+    main()
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 1053, in main
+    run_single_model(model_type, args, device, output_dir)
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 1011, in run_single_model
+    train_features, train_labels, _ = precompute_features(
+                                      ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 847, in precompute_features
+    batch_features = extractor.extract_batch(batch_paths, executor=executor)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 791, in extract_batch
+    tokens = _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 710, in _call_qwen_visual
+    out = attempt()
+          ^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 701, in <lambda>
+    lambda: model.visual(pixel_values_videos, grid_thw=video_grid_thw),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 739, in forward
+    hidden_states = blk(
+                    ^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/modeling_layers.py", line 94, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 267, in forward
+    hidden_states = hidden_states + self.attn(
+                                    ^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 226, in forward
+    splits = [
+             ^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 227, in <listcomp>
+    torch.split(tensor, lengths.tolist(), dim=2) for tensor in (query_states, key_states, value_states)
+                        ^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+[logging] writing combined stdout/stderr to /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/linear_probe_qwenvit/run.log
+[logging] started at 2026-05-02T00:57:20
+[logging] command: train_video_linear_probe.py --model-type qwenvit --train-annotation-path data/train_t_polished_v3.json --train-data-root ./data --eval-annotation-path data/eval_polished_v3.json --eval-data-root ./data --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct --output-dir outputs/linear_probe_qwenvit --log-file outputs/linear_probe_qwenvit/run.log --feature-batch-size 128 --feature-num-workers 8 --epochs 1
+
+=== Running linear probe for qwenvit ===
+[qwenvit] train samples=89194 eval samples=769
+[qwenvit] batch failed at start=0: CUDA out of memory. Tried to allocate 8.03 GiB. GPU 0 has a total capacity of 79.33 GiB of which 7.70 GiB is free. Process 2700543 has 2.80 GiB memory in use. Process 402585 has 3.65 GiB memory in use. Process 1180502 has 6.44 GiB memory in use. Process 2865524 has 58.69 GiB memory in use. Of the allocated memory 57.93 GiB is allocated by PyTorch, and 265.91 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[qwenvit] extracted up to 128/89194
+[qwenvit] batch failed at start=128: CUDA out of memory. Tried to allocate 7.74 GiB. GPU 0 has a total capacity of 79.33 GiB of which 7.43 GiB is free. Process 2700543 has 2.80 GiB memory in use. Process 402585 has 3.65 GiB memory in use. Process 1180502 has 6.44 GiB memory in use. Process 2865524 has 58.96 GiB memory in use. Of the allocated memory 56.00 GiB is allocated by PyTorch, and 2.46 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Traceback (most recent call last):
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 847, in precompute_features
+    batch_features = extractor.extract_batch(batch_paths, executor=executor)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 791, in extract_batch
+    tokens = _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 710, in _call_qwen_visual
+    out = attempt()
+          ^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 701, in <lambda>
+    lambda: model.visual(pixel_values_videos, grid_thw=video_grid_thw),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 739, in forward
+    hidden_states = blk(
+                    ^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/modeling_layers.py", line 94, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 267, in forward
+    hidden_states = hidden_states + self.attn(
+                                    ^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 195, in forward
+    query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py", line 123, in apply_rotary_pos_emb_vision
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+               ~~^~~~~
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 7.74 GiB. GPU 0 has a total capacity of 79.33 GiB of which 7.43 GiB is free. Process 2700543 has 2.80 GiB memory in use. Process 402585 has 3.65 GiB memory in use. Process 1180502 has 6.44 GiB memory in use. Process 2865524 has 58.96 GiB memory in use. Of the allocated memory 56.00 GiB is allocated by PyTorch, and 2.46 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 1057, in <module>
+    main()
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 1053, in main
+    run_single_model(model_type, args, device, output_dir)
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 1011, in run_single_model
+    train_features, train_labels, _ = precompute_features(
+                                      ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 852, in precompute_features
+    feature = extractor.extract(sample.video_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/train_video_linear_probe.py", line 759, in extract
+    vp_output = self.processor.video_processor(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_processing_utils.py", line 206, in __call__
+    return self.preprocess(videos, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_processing_utils.py", line 372, in preprocess
+    videos, video_metadata = self._decode_and_sample_videos(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_processing_utils.py", line 322, in _decode_and_sample_videos
+    videos, video_metadata = self.fetch_videos(videos, sample_indices_fn=sample_indices_fn)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_processing_utils.py", line 886, in fetch_videos
+    return list(zip(*[self.fetch_videos(x, sample_indices_fn=sample_indices_fn) for x in video_url_or_urls]))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_processing_utils.py", line 886, in <listcomp>
+    return list(zip(*[self.fetch_videos(x, sample_indices_fn=sample_indices_fn) for x in video_url_or_urls]))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_processing_utils.py", line 888, in fetch_videos
+    return load_video(video_url_or_urls, backend=backend, sample_indices_fn=sample_indices_fn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_utils.py", line 713, in load_video
+    video, metadata = video_decoder(file_obj, sample_indices_fn, **kwargs)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/transformers/video_utils.py", line 604, in read_video_torchcodec
+    video = decoder.get_frames_at(indices=indices).data.contiguous()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torchcodec/decoders/_video_decoder.py", line 235, in get_frames_at
+    data, pts_seconds, duration_seconds = core.get_frames_at_indices(
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/bn/xiangtai-training-data/env/miniconda3/envs/sqy-rl/lib/python3.11/site-packages/torch/_ops.py", line 829, in __call__
+    return self._op(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+[logging] writing combined stdout/stderr to /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/linear_probe_qwenvit/run.log
+[logging] started at 2026-05-02T01:02:06
+[logging] command: train_video_linear_probe.py --model-type qwenvit --train-annotation-path data/train_t_polished_v3.json --train-data-root ./data --eval-annotation-path data/eval_polished_v3.json --eval-data-root ./data --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct --output-dir outputs/linear_probe_qwenvit --log-file outputs/linear_probe_qwenvit/run.log --feature-batch-size 128 --feature-num-workers 8 --epochs 1
+
+=== Running linear probe for qwenvit ===
+[qwenvit] train samples=89194 eval samples=769
+[qwenvit] batch failed at start=0: CUDA out of memory. Tried to allocate 8.03 GiB. GPU 0 has a total capacity of 79.33 GiB of which 7.70 GiB is free. Process 2700543 has 2.80 GiB memory in use. Process 402585 has 3.65 GiB memory in use. Process 1180502 has 6.44 GiB memory in use. Process 3071622 has 58.69 GiB memory in use. Of the allocated memory 57.93 GiB is allocated by PyTorch, and 265.91 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[qwenvit] extracted up to 128/89194
+[qwenvit] batch failed at start=128: CUDA out of memory. Tried to allocate 7.74 GiB. GPU 0 has a total capacity of 79.33 GiB of which 7.43 GiB is free. Process 2700543 has 2.80 GiB memory in use. Process 402585 has 3.65 GiB memory in use. Process 1180502 has 6.44 GiB memory in use. Process 3071622 has 58.96 GiB memory in use. Of the allocated memory 56.00 GiB is allocated by PyTorch, and 2.46 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

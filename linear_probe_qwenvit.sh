@@ -7,6 +7,6 @@ python3 train_video_linear_probe.py \
   --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct \
   --output-dir outputs/linear_probe_qwenvit \
   --log-file outputs/linear_probe_qwenvit/run.log \
-  --feature-batch-size 4 \
-  --feature-num-workers 4 \
+  --feature-batch-size 32 \
+  --feature-num-workers 8 \
   --epochs 1
