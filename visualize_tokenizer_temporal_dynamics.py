@@ -496,13 +496,18 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
         tokens = tokens[0].detach().cpu()
         patch_size = int(getattr(model.config, "patch_size", 16))
         tubelet_size = int(getattr(model.config, "tubelet_size", 2))
-        t_frames = int(pixel_values.shape[2])
-        h_pixels = int(pixel_values.shape[3])
-        w_pixels = int(pixel_values.shape[4])
-        t_steps = max(t_frames // max(tubelet_size, 1), 1)
+        sampled_frames = int(sample.frames.shape[0])
+        t_steps = max(sampled_frames // max(tubelet_size, 1), 1)
+
+        # AutoVideoProcessor layouts can vary. The last two dims are spatial.
+        h_pixels = int(pixel_values.shape[-2])
+        w_pixels = int(pixel_values.shape[-1])
         h_tokens = max(h_pixels // max(patch_size, 1), 1)
         w_tokens = max(w_pixels // max(patch_size, 1), 1)
-        if tokens.shape[0] != t_steps * h_tokens * w_tokens:
+
+        expected_tokens = t_steps * h_tokens * w_tokens
+        if tokens.shape[0] != expected_tokens:
+            # Fall back to inferring only the spatial grid from the token count.
             spatial_tokens = max(tokens.shape[0] // max(t_steps, 1), 1)
             side = int(round(math.sqrt(spatial_tokens)))
             if side * side == spatial_tokens:
@@ -511,6 +516,14 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
             else:
                 h_tokens = spatial_tokens
                 w_tokens = 1
+            expected_tokens = t_steps * h_tokens * w_tokens
+
+        if tokens.shape[0] != expected_tokens:
+            raise ValueError(
+                f"JEPA token reshape mismatch: tokens={tokens.shape[0]}, "
+                f"t_steps={t_steps}, h_tokens={h_tokens}, w_tokens={w_tokens}, "
+                f"pixel_values_shape={tuple(pixel_values.shape)}"
+            )
         tokens = tokens.view(t_steps, h_tokens, w_tokens, -1)
         time_embeddings = tokens.mean(dim=(1, 2)).numpy()
         token_maps = tokens.numpy()
