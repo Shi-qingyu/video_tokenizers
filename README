@@ -8,6 +8,7 @@ Current tokenizers:
 - `Qwen3-VL` / QwenViT
 
 Current utilities:
+- `download_backbone_checkpoints.py`: download public DINOv3 and V-JEPA checkpoints
 - `visualize_tokenizer_temporal_dynamics.py`: visualize temporal sensitivity of different tokenizers on a video
 - `train_video_linear_probe.py`: freeze the tokenizer and train a linear probe on 7 binary video-quality dimensions
 
@@ -41,6 +42,42 @@ For `train_video_linear_probe.py`, the script parses the 7 labels from the assis
 - `Subject Existence`
 - `Object Existence`
 - `Subject-Object Interaction`
+
+## Download Checkpoints
+
+`download_backbone_checkpoints.py` downloads public DINOv3 and V-JEPA checkpoints to a local folder.
+
+List available model names:
+
+```bash
+python3 download_backbone_checkpoints.py --list
+```
+
+Download one DINO checkpoint:
+
+```bash
+python3 download_backbone_checkpoints.py \
+  --family dino \
+  --models dinov3_vitb16 \
+  --output-dir checkpoints
+```
+
+Download one JEPA checkpoint:
+
+```bash
+python3 download_backbone_checkpoints.py \
+  --family jepa \
+  --models vjepa2_vit_large \
+  --output-dir checkpoints
+```
+
+Download all supported DINO and JEPA checkpoints:
+
+```bash
+python3 download_backbone_checkpoints.py \
+  --family all \
+  --output-dir checkpoints
+```
 
 ## Feature 1: Temporal Visualization
 
