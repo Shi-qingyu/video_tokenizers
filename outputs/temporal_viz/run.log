@@ -11,3 +11,21 @@ Traceback (most recent call last):
   File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/visualize_tokenizer_temporal_dynamics.py", line 840, in add_reference_frames_row
     if axes:
 ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+[logging] writing combined stdout/stderr to /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/temporal_viz/run.log
+[logging] started at 2026-05-01T23:32:27
+[logging] command: visualize_tokenizer_temporal_dynamics.py --annotation-path data/train_t_polished_v3.json --data-root ./data --sample-index 0 --output-dir outputs/temporal_viz --log-file outputs/temporal_viz/run.log --jepa-checkpoint ./facebook/vjepa2-vitl-fpc64-256 --dino-weights ./facebook/dinov3-vitl16-pretrain-lvd1689m --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct --models qwenvit
+Traceback (most recent call last):
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/visualize_tokenizer_temporal_dynamics.py", line 1021, in <module>
+    main()
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/visualize_tokenizer_temporal_dynamics.py", line 1014, in main
+    plot_temporal_summary(output_dir / "temporal_summary.png", reference_sample, features_list)
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/visualize_tokenizer_temporal_dynamics.py", line 855, in plot_temporal_summary
+    add_reference_frames_row(fig, axes[0], reference_sample)
+  File "/mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/visualize_tokenizer_temporal_dynamics.py", line 840, in add_reference_frames_row
+    if axes:
+ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+[logging] writing combined stdout/stderr to /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/temporal_viz/run.log
+[logging] started at 2026-05-01T23:34:11
+[logging] command: visualize_tokenizer_temporal_dynamics.py --annotation-path data/train_t_polished_v3.json --data-root ./data --sample-index 0 --output-dir outputs/temporal_viz --log-file outputs/temporal_viz/run.log --jepa-checkpoint ./facebook/vjepa2-vitl-fpc64-256 --dino-weights ./facebook/dinov3-vitl16-pretrain-lvd1689m --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct --models qwenvit
+Saved outputs to: /mnt/bn/xiangtai-training-data-video/sqy/projects/video_tokenizers/outputs/temporal_viz
+[QwenViT] steps=5 mean_adjacent_delta=0.0018 max_adjacent_delta=0.0030 mean_drift=0.0025
