@@ -837,7 +837,7 @@ def add_reference_frames_row(fig: Any, axes: Sequence[Any], sample: VideoSample)
         ax.imshow(sample.frames[idx])
         ax.set_title(f"{sample.timestamps[idx]:.2f}s", fontsize=9)
         ax.axis("off")
-    if axes:
+    if len(axes) > 0:
         axes[0].set_ylabel("Reference\nframes", fontsize=10)
 
 
