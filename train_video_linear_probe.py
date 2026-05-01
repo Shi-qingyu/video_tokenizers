@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+from concurrent.futures import ProcessPoolExecutor
 import json
 import math
 import re
@@ -106,6 +107,8 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--feature-batch-size", type=int, default=4)
+    parser.add_argument("--feature-num-workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -322,6 +325,33 @@ def sample_video_uniform(video_path: Path, num_frames: int) -> Tuple[np.ndarray,
     return sampled_frames, timestamps
 
 
+def _sample_video_frames_worker(payload: Tuple[str, int]) -> np.ndarray:
+    video_path_str, num_frames = payload
+    frames, _ = sample_video_uniform(Path(video_path_str), num_frames)
+    return frames
+
+
+def load_sampled_frames_batch(
+    video_paths: Sequence[Path],
+    num_frames: int,
+    executor: Optional[ProcessPoolExecutor] = None,
+) -> List[np.ndarray]:
+    if executor is None:
+        return [sample_video_uniform(video_path, num_frames)[0] for video_path in video_paths]
+    payloads = [(str(video_path), num_frames) for video_path in video_paths]
+    return list(executor.map(_sample_video_frames_worker, payloads))
+
+
+def pad_frames_to_length(frames: np.ndarray, target_frames: int) -> np.ndarray:
+    if frames.shape[0] == target_frames:
+        return frames
+    if frames.shape[0] > target_frames:
+        return frames[:target_frames]
+    pad_count = target_frames - frames.shape[0]
+    pad_frames = np.repeat(frames[-1:], pad_count, axis=0)
+    return np.concatenate([frames, pad_frames], axis=0)
+
+
 def get_torchvision_functional():
     try:
         from torchvision.transforms import functional as TF
@@ -384,6 +414,13 @@ class FeatureExtractor:
 
     def extract(self, video_path: Path) -> torch.Tensor:
         raise NotImplementedError
+
+    def extract_batch(
+        self,
+        video_paths: Sequence[Path],
+        executor: Optional[ProcessPoolExecutor] = None,
+    ) -> List[torch.Tensor]:
+        return [self.extract(video_path) for video_path in video_paths]
 
 
 def _load_jepa_state_dict(checkpoint_path: Path) -> Dict[str, torch.Tensor]:
@@ -476,6 +513,42 @@ class JEPAFeatureExtractor(FeatureExtractor):
         tokens = self.model(clip)[0]
         return tokens.mean(dim=0).float().cpu()
 
+    @torch.inference_mode()
+    def extract_batch(
+        self,
+        video_paths: Sequence[Path],
+        executor: Optional[ProcessPoolExecutor] = None,
+    ) -> List[torch.Tensor]:
+        if self.use_hf_local_dir:
+            features: List[torch.Tensor] = []
+            for video_path in video_paths:
+                features.append(self.extract(video_path))
+            return features
+
+        frames_list = load_sampled_frames_batch(video_paths, self.args.jepa_num_frames, executor=executor)
+        clips = []
+        for frames in frames_list:
+            if frames.shape[0] < self.args.jepa_tubelet_size:
+                pad_count = self.args.jepa_tubelet_size - frames.shape[0]
+                pad_frames = np.repeat(frames[-1:], pad_count, axis=0)
+                frames = np.concatenate([frames, pad_frames], axis=0)
+            frames = pad_frames_to_length(frames, self.args.jepa_num_frames)
+            if frames.shape[0] % self.args.jepa_tubelet_size != 0:
+                usable = (frames.shape[0] // self.args.jepa_tubelet_size) * self.args.jepa_tubelet_size
+                frames = frames[:usable]
+            clips.append(
+                preprocess_video_clip(
+                    frames,
+                    short_side=self.args.jepa_short_side,
+                    crop_size=self.args.jepa_input_size,
+                )
+            )
+
+        batch = torch.stack(clips, dim=0).to(self.device)
+        tokens = self.model(batch)
+        pooled = tokens.mean(dim=1).float().cpu()
+        return [pooled[i] for i in range(pooled.shape[0])]
+
 
 class DINOFeatureExtractor(FeatureExtractor):
     def __init__(self, args: argparse.Namespace, device: torch.device):
@@ -538,6 +611,57 @@ class DINOFeatureExtractor(FeatureExtractor):
         patch_tokens = outputs["x_norm_patchtokens"]
         frame_features = patch_tokens.mean(dim=1)
         return frame_features.mean(dim=0).float().cpu()
+
+    @torch.inference_mode()
+    def extract_batch(
+        self,
+        video_paths: Sequence[Path],
+        executor: Optional[ProcessPoolExecutor] = None,
+    ) -> List[torch.Tensor]:
+        frames_list = load_sampled_frames_batch(video_paths, self.args.dino_num_frames, executor=executor)
+
+        if self.use_hf_local_dir:
+            images = []
+            for frames in frames_list:
+                frames = pad_frames_to_length(frames, self.args.dino_num_frames)
+                images.extend([to_uint8_frame(frame) for frame in frames])
+            inputs = self.processor(images=images, return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            outputs = self.model(**inputs)
+            last_hidden = outputs.last_hidden_state if hasattr(outputs, "last_hidden_state") else outputs[0]
+            pixel_values = inputs["pixel_values"]
+            patch_size = int(getattr(self.model.config, "patch_size", 16))
+            h_tokens = int(pixel_values.shape[-2] // patch_size)
+            w_tokens = int(pixel_values.shape[-1] // patch_size)
+            n_patch_tokens = h_tokens * w_tokens
+            prefix_tokens = max(int(last_hidden.shape[1] - n_patch_tokens), 0)
+            patch_tokens = last_hidden[:, prefix_tokens:, :]
+            patch_tokens = patch_tokens.view(len(video_paths), self.args.dino_num_frames, n_patch_tokens, -1)
+            frame_features = patch_tokens.mean(dim=2)
+            pooled = frame_features.mean(dim=1).float().cpu()
+            if self.feature_dim <= 0:
+                self.feature_dim = int(pooled.shape[-1])
+            return [pooled[i] for i in range(pooled.shape[0])]
+
+        image_batches = []
+        for frames in frames_list:
+            frames = pad_frames_to_length(frames, self.args.dino_num_frames)
+            image_batches.append(
+                preprocess_image_frames(
+                    frames,
+                    short_side=self.args.dino_short_side,
+                    crop_size=self.args.dino_input_size,
+                )
+            )
+        images = torch.stack(image_batches, dim=0).to(self.device)
+        batch_size, num_frames = images.shape[:2]
+        flat_images = images.view(batch_size * num_frames, *images.shape[2:])
+        outputs = self.model.forward_features(flat_images)
+        patch_tokens = outputs["x_norm_patchtokens"]
+        patch_tokens = patch_tokens.view(batch_size, num_frames, patch_tokens.shape[1], patch_tokens.shape[2])
+        frame_features = patch_tokens.mean(dim=2)
+        pooled = frame_features.mean(dim=1).float().cpu()
+        return [pooled[i] for i in range(pooled.shape[0])]
 
 
 def _load_qwen_model_and_processor(model_path: str, device: torch.device) -> Tuple[Any, Any]:
@@ -651,6 +775,43 @@ class QwenViTFeatureExtractor(FeatureExtractor):
             self.feature_dim = int(pooled.numel())
         return pooled
 
+    @torch.inference_mode()
+    def extract_batch(
+        self,
+        video_paths: Sequence[Path],
+        executor: Optional[ProcessPoolExecutor] = None,
+    ) -> List[torch.Tensor]:
+        vp_output = self.processor.video_processor(
+            videos=[str(video_path) for video_path in video_paths],
+            return_tensors="pt",
+            return_metadata=True,
+        )
+        pixel_values_videos = vp_output.pixel_values_videos.to(self.device)
+        video_grid_thw = vp_output.video_grid_thw.to(self.device)
+        tokens = _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+
+        if tokens.ndim == 3 and tokens.shape[0] == len(video_paths):
+            pooled = tokens.mean(dim=1).float().cpu()
+            if self.feature_dim <= 0:
+                self.feature_dim = int(pooled.shape[-1])
+            return [pooled[i] for i in range(pooled.shape[0])]
+
+        if tokens.ndim != 2:
+            raise ValueError(f"Unexpected batched Qwen token shape: {tuple(tokens.shape)}")
+
+        merge_size = int(getattr(getattr(self.processor, "image_processor", self.processor), "merge_size", 2))
+        merge_area = max(merge_size * merge_size, 1)
+        split_sizes = []
+        for t, h, w in video_grid_thw.detach().cpu().tolist():
+            token_count = max(int((int(t) * int(h) * int(w)) // merge_area), 1)
+            split_sizes.append(token_count)
+
+        chunks = list(torch.split(tokens, split_sizes, dim=0))
+        pooled_features = [chunk.mean(dim=0).float().cpu() for chunk in chunks]
+        if self.feature_dim <= 0 and pooled_features:
+            self.feature_dim = int(pooled_features[0].numel())
+        return pooled_features
+
 
 def build_feature_extractor(model_type: str, args: argparse.Namespace, device: torch.device) -> FeatureExtractor:
     if model_type == "jepa":
@@ -665,23 +826,54 @@ def build_feature_extractor(model_type: str, args: argparse.Namespace, device: t
 def precompute_features(
     extractor: FeatureExtractor,
     samples: Sequence[ProbeSample],
+    feature_batch_size: int,
+    feature_num_workers: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, List[Path]]:
     features: List[torch.Tensor] = []
     labels: List[torch.Tensor] = []
     kept_paths: List[Path] = []
 
     total = len(samples)
-    for idx, sample in enumerate(samples):
-        try:
-            feature = extractor.extract(sample.video_path)
-        except Exception as exc:
-            print(f"[{extractor.name}] skip {sample.video_path}: {exc}")
-            continue
-        features.append(feature)
-        labels.append(sample.labels)
-        kept_paths.append(sample.video_path)
-        if (idx + 1) % 20 == 0 or (idx + 1) == total:
-            print(f"[{extractor.name}] extracted {idx + 1}/{total}")
+    max_workers = max(int(feature_num_workers), 0)
+    executor: Optional[ProcessPoolExecutor] = None
+    if max_workers > 1:
+        executor = ProcessPoolExecutor(max_workers=max_workers)
+
+    try:
+        for start_idx in range(0, total, max(feature_batch_size, 1)):
+            batch_samples = list(samples[start_idx : start_idx + max(feature_batch_size, 1)])
+            batch_paths = [sample.video_path for sample in batch_samples]
+            try:
+                batch_features = extractor.extract_batch(batch_paths, executor=executor)
+            except Exception as exc:
+                print(f"[{extractor.name}] batch failed at start={start_idx}: {exc}")
+                for sample in batch_samples:
+                    try:
+                        feature = extractor.extract(sample.video_path)
+                    except Exception as inner_exc:
+                        print(f"[{extractor.name}] skip {sample.video_path}: {inner_exc}")
+                        continue
+                    features.append(feature)
+                    labels.append(sample.labels)
+                    kept_paths.append(sample.video_path)
+                print(f"[{extractor.name}] extracted up to {min(start_idx + len(batch_samples), total)}/{total}")
+                continue
+
+            if len(batch_features) != len(batch_samples):
+                raise RuntimeError(
+                    f"[{extractor.name}] batch feature count mismatch: "
+                    f"{len(batch_features)} features for {len(batch_samples)} samples"
+                )
+
+            for sample, feature in zip(batch_samples, batch_features):
+                features.append(feature)
+                labels.append(sample.labels)
+                kept_paths.append(sample.video_path)
+
+            print(f"[{extractor.name}] extracted {min(start_idx + len(batch_samples), total)}/{total}")
+    finally:
+        if executor is not None:
+            executor.shutdown()
 
     if not features:
         raise RuntimeError(f"No usable features extracted for {extractor.name}")
@@ -816,8 +1008,18 @@ def run_single_model(model_type: str, args: argparse.Namespace, device: torch.de
     )
     print(f"[{model_type}] train samples={len(train_samples)} eval samples={len(eval_samples)}")
 
-    train_features, train_labels, _ = precompute_features(extractor, train_samples)
-    eval_features, eval_labels, _ = precompute_features(extractor, eval_samples)
+    train_features, train_labels, _ = precompute_features(
+        extractor,
+        train_samples,
+        feature_batch_size=args.feature_batch_size,
+        feature_num_workers=args.feature_num_workers,
+    )
+    eval_features, eval_labels, _ = precompute_features(
+        extractor,
+        eval_samples,
+        feature_batch_size=args.feature_batch_size,
+        feature_num_workers=args.feature_num_workers,
+    )
 
     probe, metrics = train_linear_probe(
         train_features=train_features,
