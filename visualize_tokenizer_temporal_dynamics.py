@@ -25,10 +25,12 @@ Example:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import math
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -40,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 DINOV3_ROOT = REPO_ROOT / "dinov3"
 VJEPA2_ROOT = REPO_ROOT / "vjepa2"
 QWEN_FINETUNE_ROOT = REPO_ROOT / "Qwen3-VL" / "qwen-vl-finetune"
+LOCAL_FACEBOOK_ROOT = REPO_ROOT / "facebook"
 
 for extra_path in (DINOV3_ROOT, VJEPA2_ROOT):
     extra_path_str = str(extra_path)
@@ -50,6 +53,14 @@ for extra_path in (DINOV3_ROOT, VJEPA2_ROOT):
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
 DEFAULT_MODELS = ("jepa", "dino", "qwenvit")
+
+
+def _default_existing_dir(path: Path) -> Optional[str]:
+    return str(path.resolve()) if path.exists() else None
+
+
+DEFAULT_DINO_REF = _default_existing_dir(LOCAL_FACEBOOK_ROOT / "dinov3-vitl16-pretrain-lvd1689m")
+DEFAULT_JEPA_REF = _default_existing_dir(LOCAL_FACEBOOK_ROOT / "vjepa2-vitl-fpc64-256")
 
 
 def get_matplotlib_pyplot():
@@ -71,6 +82,13 @@ def get_torchvision_functional():
     return TF
 
 
+def is_local_dir_model_ref(model_ref: Optional[str]) -> bool:
+    if not model_ref:
+        return False
+    path = Path(model_ref).expanduser()
+    return path.exists() and path.is_dir()
+
+
 @dataclass
 class VideoSample:
     video_path: Path
@@ -88,6 +106,24 @@ class TemporalFeatures:
     timestamps: np.ndarray
     summary: Dict[str, float]
     metadata: Dict[str, Any]
+
+
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data: str) -> int:
+        for stream in self.streams:
+            stream.write(data)
+            stream.flush()
+        return len(data)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+    def isatty(self) -> bool:
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self.streams)
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,6 +155,7 @@ def parse_args() -> argparse.Namespace:
         help="Tokenizers to visualize.",
     )
     parser.add_argument("--output-dir", type=str, required=True, help="Where to save plots and features.")
+    parser.add_argument("--log-file", type=str, default=None, help="Optional file to capture stdout/stderr.")
     parser.add_argument("--device", type=str, default=None, help="Torch device, e.g. cuda:0 or cpu.")
     parser.add_argument(
         "--display-frames",
@@ -134,13 +171,23 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--dino-arch", type=str, default="dinov3_vitb16")
-    parser.add_argument("--dino-weights", type=str, default=None, help="Local checkpoint path or URL.")
+    parser.add_argument(
+        "--dino-weights",
+        type=str,
+        default=DEFAULT_DINO_REF,
+        help="Path to a DINO .pth checkpoint or a local HF DINO model directory.",
+    )
     parser.add_argument("--dino-input-size", type=int, default=224)
     parser.add_argument("--dino-short-side", type=int, default=256)
     parser.add_argument("--dino-num-frames", type=int, default=16)
 
     parser.add_argument("--jepa-arch", type=str, default="vit_large_rope")
-    parser.add_argument("--jepa-checkpoint", type=str, default=None, help="Local JEPA checkpoint.")
+    parser.add_argument(
+        "--jepa-checkpoint",
+        type=str,
+        default=DEFAULT_JEPA_REF,
+        help="Path to a JEPA .pt checkpoint or a local HF V-JEPA model directory.",
+    )
     parser.add_argument("--jepa-input-size", type=int, default=256)
     parser.add_argument("--jepa-short-side", type=int, default=292)
     parser.add_argument("--jepa-num-frames", type=int, default=16)
@@ -169,6 +216,19 @@ def choose_device(device_arg: Optional[str]) -> torch.device:
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def setup_logging(log_file: Path) -> None:
+    ensure_dir(log_file.parent)
+    handle = log_file.open("a", encoding="utf-8", buffering=1)
+    stdout = TeeStream(sys.__stdout__, handle)
+    stderr = TeeStream(sys.__stderr__, handle)
+    sys.stdout = stdout
+    sys.stderr = stderr
+    atexit.register(handle.close)
+    print(f"[logging] writing combined stdout/stderr to {log_file}")
+    print(f"[logging] started at {datetime.now().isoformat(timespec='seconds')}")
+    print(f"[logging] command: {' '.join(sys.argv)}")
 
 
 def read_json_or_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -412,6 +472,66 @@ def _load_jepa_state_dict(checkpoint_path: Path) -> Dict[str, torch.Tensor]:
 
 
 def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_path: Path) -> TemporalFeatures:
+    if is_local_dir_model_ref(args.jepa_checkpoint):
+        from transformers import AutoModel, AutoVideoProcessor
+
+        sample = sample_video_uniform(video_path, args.jepa_num_frames)
+        model_ref = str(Path(args.jepa_checkpoint).expanduser().resolve())
+        print(f"[JEPA] loading local HF model from {model_ref}")
+        processor = AutoVideoProcessor.from_pretrained(model_ref)
+        model = AutoModel.from_pretrained(model_ref).to(device).eval()
+        video = torch.from_numpy(sample.frames).permute(0, 3, 1, 2)
+        inputs = processor(video, return_tensors="pt")
+        pixel_values = inputs.get("pixel_values_videos", inputs.get("pixel_values"))
+        if pixel_values is None:
+            raise KeyError("AutoVideoProcessor did not return pixel_values_videos or pixel_values")
+
+        with torch.inference_mode():
+            tokens = model.get_vision_features(pixel_values.to(device))
+
+        if tokens.ndim == 2:
+            tokens = tokens.unsqueeze(0)
+        tokens = tokens[0].detach().cpu()
+        patch_size = int(getattr(model.config, "patch_size", 16))
+        tubelet_size = int(getattr(model.config, "tubelet_size", 2))
+        t_frames = int(pixel_values.shape[2])
+        h_pixels = int(pixel_values.shape[3])
+        w_pixels = int(pixel_values.shape[4])
+        t_steps = max(t_frames // max(tubelet_size, 1), 1)
+        h_tokens = max(h_pixels // max(patch_size, 1), 1)
+        w_tokens = max(w_pixels // max(patch_size, 1), 1)
+        if tokens.shape[0] != t_steps * h_tokens * w_tokens:
+            spatial_tokens = max(tokens.shape[0] // max(t_steps, 1), 1)
+            side = int(round(math.sqrt(spatial_tokens)))
+            if side * side == spatial_tokens:
+                h_tokens = side
+                w_tokens = side
+            else:
+                h_tokens = spatial_tokens
+                w_tokens = 1
+        tokens = tokens.view(t_steps, h_tokens, w_tokens, -1)
+        time_embeddings = tokens.mean(dim=(1, 2)).numpy()
+        token_maps = tokens.numpy()
+
+        timestamps = sample.timestamps
+        if len(timestamps) != t_steps:
+            start_time = float(timestamps[0]) if len(timestamps) else 0.0
+            end_time = float(timestamps[-1]) if len(timestamps) else float(t_steps - 1)
+            timestamps = np.linspace(start_time, end_time, t_steps, dtype=np.float32)
+
+        return TemporalFeatures(
+            name="JEPA",
+            time_embeddings=time_embeddings,
+            token_maps=token_maps,
+            timestamps=timestamps.astype(np.float32),
+            summary=summarize_features(time_embeddings),
+            metadata={
+                "source": "hf_local_dir",
+                "model_path": str(Path(args.jepa_checkpoint).expanduser().resolve()),
+                "num_sampled_frames": int(sample.frames.shape[0]),
+            },
+        )
+
     from src.models import vision_transformer as vit_encoder
 
     if not hasattr(vit_encoder, args.jepa_arch):
@@ -471,6 +591,44 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
 
 
 def extract_dino_features(args: argparse.Namespace, device: torch.device, video_path: Path) -> TemporalFeatures:
+    if is_local_dir_model_ref(args.dino_weights):
+        from transformers import AutoImageProcessor, AutoModel
+
+        sample = sample_video_uniform(video_path, args.dino_num_frames)
+        model_ref = str(Path(args.dino_weights).expanduser().resolve())
+        print(f"[DINO] loading local HF model from {model_ref}")
+        processor = AutoImageProcessor.from_pretrained(model_ref)
+        model = AutoModel.from_pretrained(model_ref).to(device).eval()
+        inputs = processor(images=[to_uint8_frame(frame) for frame in sample.frames], return_tensors="pt")
+
+        with torch.inference_mode():
+            outputs = model(**{k: v.to(device) for k, v in inputs.items()})
+            patch_tokens = outputs.last_hidden_state if hasattr(outputs, "last_hidden_state") else outputs[0]
+
+        pixel_values = inputs["pixel_values"]
+        patch_size = int(getattr(model.config, "patch_size", 16))
+        h_tokens = max(int(pixel_values.shape[-2] // max(patch_size, 1)), 1)
+        w_tokens = max(int(pixel_values.shape[-1] // max(patch_size, 1)), 1)
+        n_patch_tokens = h_tokens * w_tokens
+        prefix_tokens = max(int(patch_tokens.shape[1] - n_patch_tokens), 0)
+        patch_tokens = patch_tokens[:, prefix_tokens:, :].detach().cpu()
+        patch_tokens = patch_tokens.view(patch_tokens.shape[0], h_tokens, w_tokens, -1)
+        time_embeddings = patch_tokens.mean(dim=(1, 2)).numpy()
+        token_maps = patch_tokens.numpy()
+
+        return TemporalFeatures(
+            name="DINO",
+            time_embeddings=time_embeddings,
+            token_maps=token_maps,
+            timestamps=sample.timestamps,
+            summary=summarize_features(time_embeddings),
+            metadata={
+                "source": "hf_local_dir",
+                "model_path": str(Path(args.dino_weights).expanduser().resolve()),
+                "num_sampled_frames": int(sample.frames.shape[0]),
+            },
+        )
+
     from dinov3.hub import backbones as dino_backbones
 
     if not hasattr(dino_backbones, args.dino_arch):
@@ -830,6 +988,8 @@ def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir).expanduser().resolve()
     ensure_dir(output_dir)
+    log_file = Path(args.log_file).expanduser().resolve() if args.log_file else output_dir / "visualize_tokenizer_temporal_dynamics.log"
+    setup_logging(log_file)
 
     device = choose_device(args.device)
     video_path = resolve_video_path(args)

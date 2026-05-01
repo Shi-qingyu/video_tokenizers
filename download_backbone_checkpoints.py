@@ -11,9 +11,11 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import sys
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -48,6 +50,24 @@ JEPA_CHECKPOINTS: Dict[str, str] = {
 }
 
 
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data: str) -> int:
+        for stream in self.streams:
+            stream.write(data)
+            stream.flush()
+        return len(data)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+    def isatty(self) -> bool:
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self.streams)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--family", choices=["dino", "jepa", "all"], default="all")
@@ -58,6 +78,7 @@ def parse_args() -> argparse.Namespace:
         help="Model names to download. Default: all models in the selected family.",
     )
     parser.add_argument("--output-dir", type=str, default="checkpoints")
+    parser.add_argument("--log-file", type=str, default=None)
     parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
     parser.add_argument("--list", action="store_true", help="List available model names and exit.")
     return parser.parse_args()
@@ -80,6 +101,19 @@ def list_models() -> None:
     print("\nJEPA models:")
     for name in JEPA_CHECKPOINTS:
         print(f"  {name}")
+
+
+def setup_logging(log_file: Path) -> None:
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    handle = log_file.open("a", encoding="utf-8", buffering=1)
+    stdout = TeeStream(sys.__stdout__, handle)
+    stderr = TeeStream(sys.__stderr__, handle)
+    sys.stdout = stdout
+    sys.stderr = stderr
+    atexit.register(handle.close)
+    print(f"[logging] writing combined stdout/stderr to {log_file}")
+    print(f"[logging] started at {datetime.now().isoformat(timespec='seconds')}")
+    print(f"[logging] command: {' '.join(sys.argv)}")
 
 
 def resolve_requests(family: str, selected_models: List[str] | None) -> List[Tuple[str, str]]:
@@ -145,6 +179,9 @@ def download_file(url: str, dst_path: Path, force: bool) -> None:
 
 def main() -> None:
     args = parse_args()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    log_file = Path(args.log_file).expanduser().resolve() if args.log_file else output_dir / "download_backbone_checkpoints.log"
+    setup_logging(log_file)
     if args.list:
         list_models()
         return
@@ -155,7 +192,6 @@ def main() -> None:
         print(str(exc), file=sys.stderr)
         sys.exit(2)
 
-    output_dir = Path(args.output_dir).expanduser().resolve()
     for model_name, url in requests:
         family_dir = "dino" if model_name in DINO_CHECKPOINTS else "jepa"
         filename = os.path.basename(url)

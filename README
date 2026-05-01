@@ -79,6 +79,8 @@ python3 download_backbone_checkpoints.py \
   --output-dir checkpoints
 ```
 
+All utility scripts support `--log-file`. If omitted, they write a default log file under `output-dir`.
+
 ## Feature 1: Temporal Visualization
 
 `visualize_tokenizer_temporal_dynamics.py` compares how different tokenizers encode a video over time.
@@ -100,6 +102,7 @@ Example:
 python3 visualize_tokenizer_temporal_dynamics.py \
   --video-path /path/to/video.mp4 \
   --output-dir outputs/temporal_viz \
+  --log-file outputs/temporal_viz/run.log \
   --jepa-checkpoint /path/to/vjepa_checkpoint.pt \
   --dino-weights /path/to/dinov3_checkpoint.pth \
   --qwen-model-path /path/to/Qwen3-VL-2B-Instruct
@@ -144,6 +147,7 @@ Run DINO probing:
 python3 train_video_linear_probe.py \
   --model-type dino \
   --output-dir outputs/linear_probe_dino \
+  --log-file outputs/linear_probe_dino/run.log \
   --train-dataset-use videoreward \
   --eval-dataset-use videoreward_eval \
   --dino-weights /path/to/dinov3_checkpoint.pth \

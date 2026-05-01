@@ -11,11 +11,13 @@ and evaluates accuracy on the eval split.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import math
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -29,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 DINOV3_ROOT = REPO_ROOT / "dinov3"
 VJEPA2_ROOT = REPO_ROOT / "vjepa2"
 QWEN_FINETUNE_ROOT = REPO_ROOT / "Qwen3-VL" / "qwen-vl-finetune"
+LOCAL_FACEBOOK_ROOT = REPO_ROOT / "facebook"
 
 for extra_path in (DINOV3_ROOT, VJEPA2_ROOT):
     extra_path_str = str(extra_path)
@@ -52,6 +55,14 @@ IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3,
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
 
 
+def _default_existing_dir(path: Path) -> Optional[str]:
+    return str(path.resolve()) if path.exists() else None
+
+
+DEFAULT_DINO_REF = _default_existing_dir(LOCAL_FACEBOOK_ROOT / "dinov3-vitl16-pretrain-lvd1689m")
+DEFAULT_JEPA_REF = _default_existing_dir(LOCAL_FACEBOOK_ROOT / "vjepa2-vitl-fpc64-256")
+
+
 @dataclass
 class ProbeSample:
     video_path: Path
@@ -59,10 +70,29 @@ class ProbeSample:
     raw_answer: str
 
 
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data: str) -> int:
+        for stream in self.streams:
+            stream.write(data)
+            stream.flush()
+        return len(data)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+    def isatty(self) -> bool:
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self.streams)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-type", type=str, default="all", choices=list(MODEL_TYPES))
     parser.add_argument("--output-dir", type=str, required=True)
+    parser.add_argument("--log-file", type=str, default=None)
     parser.add_argument("--device", type=str, default=None)
 
     parser.add_argument("--train-dataset-use", type=str, default="videoreward")
@@ -82,13 +112,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
 
     parser.add_argument("--dino-arch", type=str, default="dinov3_vitb16")
-    parser.add_argument("--dino-weights", type=str, default=None)
+    parser.add_argument(
+        "--dino-weights",
+        type=str,
+        default=DEFAULT_DINO_REF,
+        help="Path to a DINO .pth checkpoint or a local HF DINO model directory.",
+    )
     parser.add_argument("--dino-input-size", type=int, default=224)
     parser.add_argument("--dino-short-side", type=int, default=256)
     parser.add_argument("--dino-num-frames", type=int, default=16)
 
     parser.add_argument("--jepa-arch", type=str, default="vit_large_rope")
-    parser.add_argument("--jepa-checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--jepa-checkpoint",
+        type=str,
+        default=DEFAULT_JEPA_REF,
+        help="Path to a JEPA .pt checkpoint or a local HF V-JEPA model directory.",
+    )
     parser.add_argument("--jepa-input-size", type=int, default=256)
     parser.add_argument("--jepa-short-side", type=int, default=292)
     parser.add_argument("--jepa-num-frames", type=int, default=16)
@@ -114,6 +154,19 @@ def set_seed(seed: int) -> None:
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def setup_logging(log_file: Path) -> None:
+    ensure_dir(log_file.parent)
+    handle = log_file.open("a", encoding="utf-8", buffering=1)
+    stdout = TeeStream(sys.__stdout__, handle)
+    stderr = TeeStream(sys.__stderr__, handle)
+    sys.stdout = stdout
+    sys.stderr = stderr
+    atexit.register(handle.close)
+    print(f"[logging] writing combined stdout/stderr to {log_file}")
+    print(f"[logging] started at {datetime.now().isoformat(timespec='seconds')}")
+    print(f"[logging] command: {' '.join(sys.argv)}")
 
 
 def read_json_or_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -277,6 +330,13 @@ def get_torchvision_functional():
     return TF
 
 
+def is_local_dir_model_ref(model_ref: Optional[str]) -> bool:
+    if not model_ref:
+        return False
+    path = Path(model_ref).expanduser()
+    return path.exists() and path.is_dir()
+
+
 def to_uint8_frame(frame: np.ndarray) -> np.ndarray:
     if frame.dtype == np.uint8:
         return frame
@@ -345,33 +405,61 @@ def _load_jepa_state_dict(checkpoint_path: Path) -> Dict[str, torch.Tensor]:
 
 class JEPAFeatureExtractor(FeatureExtractor):
     def __init__(self, args: argparse.Namespace, device: torch.device):
-        from src.models import vision_transformer as vit_encoder
-
-        if not hasattr(vit_encoder, args.jepa_arch):
-            raise ValueError(f"Unknown JEPA architecture: {args.jepa_arch}")
         self.args = args
         self.device = device
         self.name = "jepa"
+        self.use_hf_local_dir = is_local_dir_model_ref(args.jepa_checkpoint)
 
-        model = getattr(vit_encoder, args.jepa_arch)(
-            img_size=(args.jepa_input_size, args.jepa_input_size),
-            num_frames=args.jepa_num_frames,
-            tubelet_size=args.jepa_tubelet_size,
-        )
-        if args.jepa_checkpoint:
-            state_dict = _load_jepa_state_dict(Path(args.jepa_checkpoint).expanduser().resolve())
-            msg = model.load_state_dict(state_dict, strict=False)
-            print(f"[JEPA] checkpoint load message: {msg}")
+        if self.use_hf_local_dir:
+            from transformers import AutoModel, AutoVideoProcessor
+
+            model_ref = str(Path(args.jepa_checkpoint).expanduser().resolve())
+            print(f"[JEPA] loading local HF model from {model_ref}")
+            self.processor = AutoVideoProcessor.from_pretrained(model_ref)
+            self.model = AutoModel.from_pretrained(model_ref).to(device).eval()
+            self.feature_dim = int(getattr(self.model.config, "hidden_size", 0))
         else:
-            print("[JEPA] no checkpoint provided, using current initialization")
+            from src.models import vision_transformer as vit_encoder
 
-        self.model = model.to(device).eval()
+            if not hasattr(vit_encoder, args.jepa_arch):
+                raise ValueError(f"Unknown JEPA architecture: {args.jepa_arch}")
+
+            model = getattr(vit_encoder, args.jepa_arch)(
+                img_size=(args.jepa_input_size, args.jepa_input_size),
+                num_frames=args.jepa_num_frames,
+                tubelet_size=args.jepa_tubelet_size,
+            )
+            if args.jepa_checkpoint:
+                state_dict = _load_jepa_state_dict(Path(args.jepa_checkpoint).expanduser().resolve())
+                msg = model.load_state_dict(state_dict, strict=False)
+                print(f"[JEPA] checkpoint load message: {msg}")
+            else:
+                print("[JEPA] no checkpoint provided, using current initialization")
+
+            self.model = model.to(device).eval()
+            self.feature_dim = int(self.model.embed_dim)
+
         for param in self.model.parameters():
             param.requires_grad = False
-        self.feature_dim = int(self.model.embed_dim)
 
     @torch.inference_mode()
     def extract(self, video_path: Path) -> torch.Tensor:
+        if self.use_hf_local_dir:
+            frames, _ = sample_video_uniform(video_path, self.args.jepa_num_frames)
+            video = torch.from_numpy(frames).permute(0, 3, 1, 2)
+            inputs = self.processor(video, return_tensors="pt")
+            pixel_values = inputs.get("pixel_values_videos", inputs.get("pixel_values"))
+            if pixel_values is None:
+                raise KeyError("AutoVideoProcessor did not return pixel_values_videos or pixel_values")
+            pixel_values = pixel_values.to(self.device)
+            tokens = self.model.get_vision_features(pixel_values)
+            if tokens.ndim == 3:
+                tokens = tokens[0]
+            pooled = tokens.mean(dim=0)
+            if self.feature_dim <= 0:
+                self.feature_dim = int(pooled.numel())
+            return pooled.float().cpu()
+
         frames, _ = sample_video_uniform(video_path, self.args.jepa_num_frames)
         if frames.shape[0] < self.args.jepa_tubelet_size:
             pad_count = self.args.jepa_tubelet_size - frames.shape[0]
@@ -391,26 +479,56 @@ class JEPAFeatureExtractor(FeatureExtractor):
 
 class DINOFeatureExtractor(FeatureExtractor):
     def __init__(self, args: argparse.Namespace, device: torch.device):
-        from dinov3.hub import backbones as dino_backbones
-
-        if not hasattr(dino_backbones, args.dino_arch):
-            raise ValueError(f"Unknown DINO architecture: {args.dino_arch}")
         self.args = args
         self.device = device
         self.name = "dino"
+        self.use_hf_local_dir = is_local_dir_model_ref(args.dino_weights)
 
-        model_kwargs: Dict[str, Any] = {"pretrained": args.dino_weights is None}
-        if args.dino_weights is not None:
-            model_kwargs["pretrained"] = True
-            model_kwargs["weights"] = str(Path(args.dino_weights).expanduser().resolve())
-        self.model = getattr(dino_backbones, args.dino_arch)(**model_kwargs).to(device).eval()
+        if self.use_hf_local_dir:
+            from transformers import AutoImageProcessor, AutoModel
+
+            model_ref = str(Path(args.dino_weights).expanduser().resolve())
+            print(f"[DINO] loading local HF model from {model_ref}")
+            self.processor = AutoImageProcessor.from_pretrained(model_ref)
+            self.model = AutoModel.from_pretrained(model_ref).to(device).eval()
+            self.feature_dim = int(getattr(self.model.config, "hidden_size", 0))
+        else:
+            from dinov3.hub import backbones as dino_backbones
+
+            if not hasattr(dino_backbones, args.dino_arch):
+                raise ValueError(f"Unknown DINO architecture: {args.dino_arch}")
+
+            model_kwargs: Dict[str, Any] = {"pretrained": args.dino_weights is None}
+            if args.dino_weights is not None:
+                model_kwargs["pretrained"] = True
+                model_kwargs["weights"] = str(Path(args.dino_weights).expanduser().resolve())
+            self.model = getattr(dino_backbones, args.dino_arch)(**model_kwargs).to(device).eval()
+            self.feature_dim = int(self.model.embed_dim)
+
         for param in self.model.parameters():
             param.requires_grad = False
-        self.feature_dim = int(self.model.embed_dim)
 
     @torch.inference_mode()
     def extract(self, video_path: Path) -> torch.Tensor:
         frames, _ = sample_video_uniform(video_path, self.args.dino_num_frames)
+        if self.use_hf_local_dir:
+            inputs = self.processor(images=[to_uint8_frame(frame) for frame in frames], return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            outputs = self.model(**inputs)
+            last_hidden = outputs.last_hidden_state if hasattr(outputs, "last_hidden_state") else outputs[0]
+            pixel_values = inputs["pixel_values"]
+            patch_size = int(getattr(self.model.config, "patch_size", 16))
+            h_tokens = int(pixel_values.shape[-2] // patch_size)
+            w_tokens = int(pixel_values.shape[-1] // patch_size)
+            n_patch_tokens = h_tokens * w_tokens
+            prefix_tokens = max(int(last_hidden.shape[1] - n_patch_tokens), 0)
+            patch_tokens = last_hidden[:, prefix_tokens:, :]
+            frame_features = patch_tokens.mean(dim=1)
+            pooled = frame_features.mean(dim=0)
+            if self.feature_dim <= 0:
+                self.feature_dim = int(pooled.numel())
+            return pooled.float().cpu()
+
         images = preprocess_image_frames(
             frames,
             short_side=self.args.dino_short_side,
@@ -717,10 +835,12 @@ def run_single_model(model_type: str, args: argparse.Namespace, device: torch.de
 
 def main() -> None:
     args = parse_args()
-    set_seed(args.seed)
-    device = choose_device(args.device)
     output_dir = Path(args.output_dir).expanduser().resolve()
     ensure_dir(output_dir)
+    log_file = Path(args.log_file).expanduser().resolve() if args.log_file else output_dir / "train_video_linear_probe.log"
+    setup_logging(log_file)
+    set_seed(args.seed)
+    device = choose_device(args.device)
 
     if args.model_type == "all":
         model_types = ["jepa", "dino", "qwenvit"]
