@@ -1,1 +1,164 @@
-readme
+# video_tokenizers
+
+This repo is for studying how different visual tokenizers perceive temporal information in video.
+
+Current tokenizers:
+- `vjepa2` / JEPA
+- `dinov3` / DINO
+- `Qwen3-VL` / QwenViT
+
+Current utilities:
+- `visualize_tokenizer_temporal_dynamics.py`: visualize temporal sensitivity of different tokenizers on a video
+- `train_video_linear_probe.py`: freeze the tokenizer and train a linear probe on 7 binary video-quality dimensions
+
+## Dataset Format
+
+The scripts assume RL-style annotations like:
+
+```json
+[
+  {
+    "videos": ["videos/train_0/0.mp4"],
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<video>\n..."
+      },
+      {
+        "from": "gpt",
+        "value": "<think>...</think>\n<answer>\nVideo Quality: Yes. Subject Movement: No. ...\n</answer>"
+      }
+    ]
+  }
+]
+```
+
+For `train_video_linear_probe.py`, the script parses the 7 labels from the assistant `<answer>` block:
+- `Video Quality`
+- `Subject Movement`
+- `Physical Interaction`
+- `Cause-Effect`
+- `Subject Existence`
+- `Object Existence`
+- `Subject-Object Interaction`
+
+## Feature 1: Temporal Visualization
+
+`visualize_tokenizer_temporal_dynamics.py` compares how different tokenizers encode a video over time.
+
+Outputs:
+- `temporal_summary.png`
+- `spatial_change_heatmaps.png`
+- `temporal_features.npz`
+
+What it visualizes:
+- temporal self-similarity matrix
+- adjacent-step feature change
+- PCA trajectory over time
+- spatial token change heatmaps between adjacent time steps
+
+Example:
+
+```bash
+python3 visualize_tokenizer_temporal_dynamics.py \
+  --video-path /path/to/video.mp4 \
+  --output-dir outputs/temporal_viz \
+  --jepa-checkpoint /path/to/vjepa_checkpoint.pt \
+  --dino-weights /path/to/dinov3_checkpoint.pth \
+  --qwen-model-path /path/to/Qwen3-VL-2B-Instruct
+```
+
+You can also load the video from an annotation file:
+
+```bash
+python3 visualize_tokenizer_temporal_dynamics.py \
+  --annotation-path /path/to/train.json \
+  --data-root /path/to/data_root \
+  --sample-index 0 \
+  --output-dir outputs/temporal_viz \
+  --jepa-checkpoint /path/to/vjepa_checkpoint.pt \
+  --dino-weights /path/to/dinov3_checkpoint.pth \
+  --qwen-model-path /path/to/Qwen3-VL-2B-Instruct
+```
+
+## Feature 2: Linear Probing
+
+`train_video_linear_probe.py` freezes the visual tokenizer, extracts one pooled visual feature per video, and trains a single linear layer to predict the 7 `Yes/No` labels.
+
+Default behavior:
+- frozen visual backbone
+- pooled video feature
+- `nn.Linear(feature_dim, 7)`
+- train for `1` epoch
+- evaluate accuracy on the eval split
+
+Saved outputs:
+- `{model_type}_linear_probe.pt`
+- `{model_type}_metrics.json`
+
+Reported metrics:
+- per-dimension accuracy
+- mean accuracy over 7 dimensions
+- exact-match accuracy
+
+Run DINO probing:
+
+```bash
+python3 train_video_linear_probe.py \
+  --model-type dino \
+  --output-dir outputs/linear_probe_dino \
+  --train-dataset-use videoreward \
+  --eval-dataset-use videoreward_eval \
+  --dino-weights /path/to/dinov3_checkpoint.pth \
+  --epochs 1
+```
+
+Run JEPA probing:
+
+```bash
+python3 train_video_linear_probe.py \
+  --model-type jepa \
+  --output-dir outputs/linear_probe_jepa \
+  --train-dataset-use videoreward \
+  --eval-dataset-use videoreward_eval \
+  --jepa-checkpoint /path/to/vjepa_checkpoint.pt \
+  --epochs 1
+```
+
+Run QwenViT probing:
+
+```bash
+python3 train_video_linear_probe.py \
+  --model-type qwenvit \
+  --output-dir outputs/linear_probe_qwen \
+  --train-dataset-use videoreward \
+  --eval-dataset-use videoreward_eval \
+  --qwen-model-path /path/to/Qwen3-VL-2B-Instruct \
+  --epochs 1
+```
+
+Run all three tokenizers sequentially:
+
+```bash
+python3 train_video_linear_probe.py \
+  --model-type all \
+  --output-dir outputs/linear_probe_all \
+  --train-dataset-use videoreward \
+  --eval-dataset-use videoreward_eval \
+  --dino-weights /path/to/dinov3_checkpoint.pth \
+  --jepa-checkpoint /path/to/vjepa_checkpoint.pt \
+  --qwen-model-path /path/to/Qwen3-VL-2B-Instruct \
+  --epochs 1
+```
+
+If you want to use custom annotations instead of `dataset/__init__.py`, pass:
+- `--train-annotation-path`
+- `--train-data-root`
+- `--eval-annotation-path`
+- `--eval-data-root`
+
+## Notes
+
+- These scripts focus on visual-tokenizer ability, so the probe uses visual features only and does not feed the prompt text into the classifier.
+- `Qwen3-VL`, `dinov3`, and `vjepa2` are included as local directories in this repo.
+- You will need the corresponding Python dependencies installed in your runtime environment, such as `torch`, `numpy`, `torchvision`, `matplotlib`, and tokenizer-specific dependencies like `transformers`, `decord`, or `imageio`.
