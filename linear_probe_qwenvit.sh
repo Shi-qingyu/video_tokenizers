@@ -1,0 +1,10 @@
+python3 train_video_linear_probe.py \
+  --model-type qwenvit \
+  --train-annotation-path data/train_t_polished_v3.json \
+  --train-data-root ./data \
+  --eval-annotation-path data/eval_polished_v3.json \
+  --eval-data-root ./data \
+  --qwen-model-path ./Qwen/Qwen3-VL-2B-Instruct \
+  --output-dir outputs/linear_probe_qwenvit \
+  --log-file outputs/linear_probe_qwenvit/run.log \
+  --epochs 1
