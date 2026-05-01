@@ -108,6 +108,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-data-root", type=str, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-eval-samples", type=int, default=None)
+    parser.add_argument(
+        "--train-fraction",
+        type=float,
+        default=1.0,
+        help="Fraction of the training split to keep for probing, in (0, 1].",
+    )
 
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -196,6 +202,11 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if not (0.0 < args.train_fraction <= 1.0):
+        raise ValueError(f"--train-fraction must be in (0, 1], got {args.train_fraction}")
 
 
 def ensure_dir(path: Path) -> None:
@@ -1149,6 +1160,20 @@ def load_split(
     return build_probe_samples(items, max_samples=max_samples)
 
 
+def maybe_subsample_samples(
+    samples: Sequence[ProbeSample],
+    fraction: float,
+    seed: int,
+) -> List[ProbeSample]:
+    if fraction >= 1.0 or not samples:
+        return list(samples)
+
+    keep_count = max(1, int(math.ceil(len(samples) * fraction)))
+    rng = np.random.default_rng(seed)
+    selected_indices = np.sort(rng.choice(len(samples), size=keep_count, replace=False))
+    return [samples[int(idx)] for idx in selected_indices]
+
+
 def run_single_model(model_type: str, args: argparse.Namespace, device: torch.device, output_dir: Path) -> None:
     print(f"\n=== Running linear probe for {model_type} (rank={get_rank()}/{get_world_size()}) ===")
     extractor = build_feature_extractor(model_type, args, device)
@@ -1159,13 +1184,18 @@ def run_single_model(model_type: str, args: argparse.Namespace, device: torch.de
         data_root=args.train_data_root,
         max_samples=args.max_train_samples,
     )
+    original_train_count = len(train_samples)
+    train_samples = maybe_subsample_samples(train_samples, args.train_fraction, args.seed)
     eval_samples = load_split(
         dataset_use=args.eval_dataset_use,
         annotation_path=args.eval_annotation_path,
         data_root=args.eval_data_root,
         max_samples=args.max_eval_samples,
     )
-    print(f"[{model_type}] train samples={len(train_samples)} eval samples={len(eval_samples)}")
+    print(
+        f"[{model_type}] train samples={len(train_samples)}/{original_train_count} "
+        f"(fraction={args.train_fraction:.4f}) eval samples={len(eval_samples)}"
+    )
 
     train_features, train_labels, _ = precompute_features(
         extractor,
@@ -1198,6 +1228,7 @@ def run_single_model(model_type: str, args: argparse.Namespace, device: torch.de
 
 def main() -> None:
     args = parse_args()
+    validate_args(args)
     device = setup_distributed(args.device)
     output_dir = Path(args.output_dir).expanduser().resolve()
     ensure_dir(output_dir)
