@@ -423,6 +423,60 @@ class FeatureExtractor:
         return [self.extract(video_path) for video_path in video_paths]
 
 
+class JEPAHFVisionWrapper(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        return self.model.get_vision_features(pixel_values)
+
+
+class JEPALocalVisionWrapper(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, clip: torch.Tensor) -> torch.Tensor:
+        return self.model(clip)
+
+
+class DINOHFVisionWrapper(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        outputs = self.model(pixel_values=pixel_values)
+        return outputs.last_hidden_state if hasattr(outputs, "last_hidden_state") else outputs[0]
+
+
+class DINOLocalVisionWrapper(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        outputs = self.model.forward_features(images)
+        return outputs["x_norm_patchtokens"]
+
+
+class QwenVisualWrapper(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values_videos: torch.Tensor, video_grid_thw: torch.Tensor) -> torch.Tensor:
+        return _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+
+
+def maybe_wrap_dataparallel(module: nn.Module, device: torch.device) -> nn.Module:
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        print(f"[multi-gpu] enabling DataParallel across {torch.cuda.device_count()} GPUs")
+        return nn.DataParallel(module)
+    return module
+
+
 def _load_jepa_state_dict(checkpoint_path: Path) -> Dict[str, torch.Tensor]:
     checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
     if "encoder" in checkpoint:
@@ -455,6 +509,7 @@ class JEPAFeatureExtractor(FeatureExtractor):
             self.processor = AutoVideoProcessor.from_pretrained(model_ref)
             self.model = AutoModel.from_pretrained(model_ref).to(device).eval()
             self.feature_dim = int(getattr(self.model.config, "hidden_size", 0))
+            self.forward_model = maybe_wrap_dataparallel(JEPAHFVisionWrapper(self.model).to(device).eval(), device)
         else:
             from src.models import vision_transformer as vit_encoder
 
@@ -475,6 +530,7 @@ class JEPAFeatureExtractor(FeatureExtractor):
 
             self.model = model.to(device).eval()
             self.feature_dim = int(self.model.embed_dim)
+            self.forward_model = maybe_wrap_dataparallel(JEPALocalVisionWrapper(self.model).to(device).eval(), device)
 
         for param in self.model.parameters():
             param.requires_grad = False
@@ -489,7 +545,7 @@ class JEPAFeatureExtractor(FeatureExtractor):
             if pixel_values is None:
                 raise KeyError("AutoVideoProcessor did not return pixel_values_videos or pixel_values")
             pixel_values = pixel_values.to(self.device)
-            tokens = self.model.get_vision_features(pixel_values)
+            tokens = self.forward_model(pixel_values)
             if tokens.ndim == 3:
                 tokens = tokens[0]
             pooled = tokens.mean(dim=0)
@@ -510,7 +566,7 @@ class JEPAFeatureExtractor(FeatureExtractor):
             short_side=self.args.jepa_short_side,
             crop_size=self.args.jepa_input_size,
         ).unsqueeze(0).to(self.device)
-        tokens = self.model(clip)[0]
+        tokens = self.forward_model(clip)[0]
         return tokens.mean(dim=0).float().cpu()
 
     @torch.inference_mode()
@@ -545,7 +601,7 @@ class JEPAFeatureExtractor(FeatureExtractor):
             )
 
         batch = torch.stack(clips, dim=0).to(self.device)
-        tokens = self.model(batch)
+        tokens = self.forward_model(batch)
         pooled = tokens.mean(dim=1).float().cpu()
         return [pooled[i] for i in range(pooled.shape[0])]
 
@@ -565,6 +621,7 @@ class DINOFeatureExtractor(FeatureExtractor):
             self.processor = AutoImageProcessor.from_pretrained(model_ref)
             self.model = AutoModel.from_pretrained(model_ref).to(device).eval()
             self.feature_dim = int(getattr(self.model.config, "hidden_size", 0))
+            self.forward_model = maybe_wrap_dataparallel(DINOHFVisionWrapper(self.model).to(device).eval(), device)
         else:
             from dinov3.hub import backbones as dino_backbones
 
@@ -577,6 +634,7 @@ class DINOFeatureExtractor(FeatureExtractor):
                 model_kwargs["weights"] = str(Path(args.dino_weights).expanduser().resolve())
             self.model = getattr(dino_backbones, args.dino_arch)(**model_kwargs).to(device).eval()
             self.feature_dim = int(self.model.embed_dim)
+            self.forward_model = maybe_wrap_dataparallel(DINOLocalVisionWrapper(self.model).to(device).eval(), device)
 
         for param in self.model.parameters():
             param.requires_grad = False
@@ -587,8 +645,7 @@ class DINOFeatureExtractor(FeatureExtractor):
         if self.use_hf_local_dir:
             inputs = self.processor(images=[to_uint8_frame(frame) for frame in frames], return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            outputs = self.model(**inputs)
-            last_hidden = outputs.last_hidden_state if hasattr(outputs, "last_hidden_state") else outputs[0]
+            last_hidden = self.forward_model(inputs["pixel_values"])
             pixel_values = inputs["pixel_values"]
             patch_size = int(getattr(self.model.config, "patch_size", 16))
             h_tokens = int(pixel_values.shape[-2] // patch_size)
@@ -607,8 +664,7 @@ class DINOFeatureExtractor(FeatureExtractor):
             short_side=self.args.dino_short_side,
             crop_size=self.args.dino_input_size,
         ).to(self.device)
-        outputs = self.model.forward_features(images)
-        patch_tokens = outputs["x_norm_patchtokens"]
+        patch_tokens = self.forward_model(images)
         frame_features = patch_tokens.mean(dim=1)
         return frame_features.mean(dim=0).float().cpu()
 
@@ -627,8 +683,7 @@ class DINOFeatureExtractor(FeatureExtractor):
                 images.extend([to_uint8_frame(frame) for frame in frames])
             inputs = self.processor(images=images, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            outputs = self.model(**inputs)
-            last_hidden = outputs.last_hidden_state if hasattr(outputs, "last_hidden_state") else outputs[0]
+            last_hidden = self.forward_model(inputs["pixel_values"])
             pixel_values = inputs["pixel_values"]
             patch_size = int(getattr(self.model.config, "patch_size", 16))
             h_tokens = int(pixel_values.shape[-2] // patch_size)
@@ -656,8 +711,7 @@ class DINOFeatureExtractor(FeatureExtractor):
         images = torch.stack(image_batches, dim=0).to(self.device)
         batch_size, num_frames = images.shape[:2]
         flat_images = images.view(batch_size * num_frames, *images.shape[2:])
-        outputs = self.model.forward_features(flat_images)
-        patch_tokens = outputs["x_norm_patchtokens"]
+        patch_tokens = self.forward_model(flat_images)
         patch_tokens = patch_tokens.view(batch_size, num_frames, patch_tokens.shape[1], patch_tokens.shape[2])
         frame_features = patch_tokens.mean(dim=2)
         pooled = frame_features.mean(dim=1).float().cpu()
@@ -743,6 +797,7 @@ class QwenViTFeatureExtractor(FeatureExtractor):
         self.device = device
         self.name = "qwenvit"
         self.model, self.processor = _load_qwen_model_and_processor(args.qwen_model_path, device)
+        self.forward_model = maybe_wrap_dataparallel(QwenVisualWrapper(self.model).to(device).eval(), device)
         for param in self.model.parameters():
             param.requires_grad = False
 
@@ -763,7 +818,7 @@ class QwenViTFeatureExtractor(FeatureExtractor):
         )
         pixel_values_videos = vp_output.pixel_values_videos.to(self.device)
         video_grid_thw = vp_output.video_grid_thw.to(self.device)
-        tokens = _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+        tokens = self.forward_model(pixel_values_videos, video_grid_thw)
         if tokens.ndim == 2:
             pooled = tokens.mean(dim=0)
         elif tokens.ndim == 3:
@@ -788,7 +843,7 @@ class QwenViTFeatureExtractor(FeatureExtractor):
         )
         pixel_values_videos = vp_output.pixel_values_videos.to(self.device)
         video_grid_thw = vp_output.video_grid_thw.to(self.device)
-        tokens = _call_qwen_visual(self.model, pixel_values_videos, video_grid_thw)
+        tokens = self.forward_model(pixel_values_videos, video_grid_thw)
 
         if tokens.ndim == 3 and tokens.shape[0] == len(video_paths):
             pooled = tokens.mean(dim=1).float().cpu()
@@ -891,6 +946,8 @@ def train_linear_probe(
 ) -> Tuple[nn.Module, Dict[str, Any]]:
     feature_dim = int(train_features.shape[1])
     probe = nn.Linear(feature_dim, len(LABEL_NAMES)).to(device)
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        probe = nn.DataParallel(probe)
     optimizer = torch.optim.AdamW(probe.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = nn.BCEWithLogitsLoss()
 
@@ -1030,7 +1087,8 @@ def run_single_model(model_type: str, args: argparse.Namespace, device: torch.de
         device=device,
     )
 
-    torch.save(probe.state_dict(), output_dir / f"{model_type}_linear_probe.pt")
+    state_dict = probe.module.state_dict() if isinstance(probe, nn.DataParallel) else probe.state_dict()
+    torch.save(state_dict, output_dir / f"{model_type}_linear_probe.pt")
     save_results(output_dir, model_type, metrics, len(train_features), len(eval_features))
     print_metrics(model_type, metrics)
 
