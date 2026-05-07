@@ -993,6 +993,21 @@ def project_token_maps_to_rgb(token_maps: np.ndarray) -> np.ndarray:
     return proj.astype(np.float32)
 
 
+def resize_pca_map_to_frame(pca_map: np.ndarray, target_hw: Tuple[int, int]) -> np.ndarray:
+    target_h, target_w = target_hw
+    if pca_map.shape[0] == target_h and pca_map.shape[1] == target_w:
+        return pca_map
+
+    tensor = torch.from_numpy(pca_map).permute(2, 0, 1).unsqueeze(0)
+    resized = torch.nn.functional.interpolate(
+        tensor,
+        size=(target_h, target_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return resized[0].permute(1, 2, 0).numpy()
+
+
 def align_timestamps(reference_timestamps: np.ndarray, target_timestamps: np.ndarray) -> np.ndarray:
     if len(target_timestamps) == 0:
         return np.zeros(len(reference_timestamps), dtype=int)
@@ -1023,7 +1038,10 @@ def plot_frame_pca_gallery(
         aligned_indices = align_timestamps(reference_sample.timestamps, item.timestamps)
         for col_idx, ax in enumerate(axes[row_idx]):
             token_idx = int(aligned_indices[col_idx])
-            ax.imshow(pca_maps[token_idx], interpolation="nearest")
+            target_frame = reference_sample.frames[col_idx]
+            target_hw = (int(target_frame.shape[0]), int(target_frame.shape[1]))
+            resized_pca_map = resize_pca_map_to_frame(pca_maps[token_idx], target_hw)
+            ax.imshow(resized_pca_map)
             ax.set_xticks([])
             ax.set_yticks([])
             ax.set_xlabel(f"{item.timestamps[token_idx]:.2f}s", fontsize=9)
