@@ -1008,6 +1008,21 @@ def resize_pca_map_to_frame(pca_map: np.ndarray, target_hw: Tuple[int, int]) -> 
     return resized[0].permute(1, 2, 0).numpy()
 
 
+def resize_scalar_map_to_frame(change_map: np.ndarray, target_hw: Tuple[int, int]) -> np.ndarray:
+    target_h, target_w = target_hw
+    if change_map.shape[0] == target_h and change_map.shape[1] == target_w:
+        return change_map
+
+    tensor = torch.from_numpy(change_map).unsqueeze(0).unsqueeze(0)
+    resized = torch.nn.functional.interpolate(
+        tensor,
+        size=(target_h, target_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return resized[0, 0].numpy()
+
+
 def align_timestamps(reference_timestamps: np.ndarray, target_timestamps: np.ndarray) -> np.ndarray:
     if len(target_timestamps) == 0:
         return np.zeros(len(reference_timestamps), dtype=int)
@@ -1015,43 +1030,76 @@ def align_timestamps(reference_timestamps: np.ndarray, target_timestamps: np.nda
     return deltas.argmin(axis=1).astype(int)
 
 
-def plot_frame_pca_gallery(
+def align_change_map_timestamps(reference_timestamps: np.ndarray, target_timestamps: np.ndarray) -> np.ndarray:
+    if len(target_timestamps) < 2:
+        return np.zeros(len(reference_timestamps), dtype=int)
+    midpoints = 0.5 * (target_timestamps[:-1] + target_timestamps[1:])
+    deltas = np.abs(reference_timestamps[:, None] - midpoints[None, :])
+    return deltas.argmin(axis=1).astype(int)
+
+
+def plot_frame_pca_heatmap_overview(
     output_path: Path,
     reference_sample: VideoSample,
-    features_list: Sequence[TemporalFeatures],
+    item: TemporalFeatures,
 ) -> None:
     plt = get_matplotlib_pyplot()
     cols = len(reference_sample.frames)
-    rows = len(features_list) + 1
-    fig, axes = plt.subplots(rows, cols, figsize=(2.7 * cols, 2.7 * rows), constrained_layout=True)
-    if rows == 1 and cols == 1:
-        axes = np.asarray([[axes]])
-    elif rows == 1:
-        axes = np.expand_dims(np.asarray(axes), 0)
-    elif cols == 1:
-        axes = np.expand_dims(np.asarray(axes), 1)
+    rows = 3
+    fig, axes = plt.subplots(rows, cols, figsize=(2.7 * cols, 8.2), constrained_layout=True)
+    axes = np.asarray(axes)
+    if axes.ndim == 1:
+        axes = axes.reshape(rows, 1)
 
     add_reference_frames_row(fig, axes[0], reference_sample)
 
-    for row_idx, item in enumerate(features_list, start=1):
-        pca_maps = project_token_maps_to_rgb(item.token_maps)
-        aligned_indices = align_timestamps(reference_sample.timestamps, item.timestamps)
-        for col_idx, ax in enumerate(axes[row_idx]):
-            token_idx = int(aligned_indices[col_idx])
-            target_frame = reference_sample.frames[col_idx]
-            target_hw = (int(target_frame.shape[0]), int(target_frame.shape[1]))
-            resized_pca_map = resize_pca_map_to_frame(pca_maps[token_idx], target_hw)
-            ax.imshow(resized_pca_map)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_xlabel(f"{item.timestamps[token_idx]:.2f}s", fontsize=9)
-            if col_idx == 0:
-                ax.set_ylabel(f"{item.name}\nPCA", fontsize=10)
+    pca_maps = project_token_maps_to_rgb(item.token_maps)
+    pca_indices = align_timestamps(reference_sample.timestamps, item.timestamps)
+    change_maps = compute_spatial_change_maps(item.token_maps)
+    change_indices = align_change_map_timestamps(reference_sample.timestamps, item.timestamps)
+    vmax = float(change_maps.max()) if change_maps.size else 1.0
+    last_im = None
+
+    for col_idx in range(cols):
+        target_frame = reference_sample.frames[col_idx]
+        target_hw = (int(target_frame.shape[0]), int(target_frame.shape[1]))
+
+        pca_token_idx = int(pca_indices[col_idx])
+        pca_ax = axes[1, col_idx]
+        resized_pca_map = resize_pca_map_to_frame(pca_maps[pca_token_idx], target_hw)
+        pca_ax.imshow(resized_pca_map)
+        pca_ax.set_xticks([])
+        pca_ax.set_yticks([])
+        pca_ax.set_xlabel(f"{item.timestamps[pca_token_idx]:.2f}s", fontsize=9)
+        if col_idx == 0:
+            pca_ax.set_ylabel(f"{item.name}\nPCA", fontsize=10)
+
+        heatmap_ax = axes[2, col_idx]
+        if len(change_maps) == 0:
+            heatmap_ax.axis("off")
+            continue
+        change_idx = int(change_indices[col_idx])
+        resized_change_map = resize_scalar_map_to_frame(change_maps[change_idx], target_hw)
+        last_im = heatmap_ax.imshow(
+            resized_change_map,
+            cmap="viridis",
+            vmin=0.0,
+            vmax=max(vmax, 1e-6),
+        )
+        start_t = float(item.timestamps[change_idx])
+        end_t = float(item.timestamps[min(change_idx + 1, len(item.timestamps) - 1)])
+        heatmap_ax.set_xticks([])
+        heatmap_ax.set_yticks([])
+        heatmap_ax.set_xlabel(f"{start_t:.2f}s -> {end_t:.2f}s", fontsize=8)
+        if col_idx == 0:
+            heatmap_ax.set_ylabel(f"{item.name}\nHeatmap", fontsize=10)
 
     fig.suptitle(
-        f"Original frames and frame-aligned PCA token maps\nVideo: {reference_sample.video_path.name}",
+        f"{item.name}: original frames, PCA token maps, and spatial change heatmaps\nVideo: {reference_sample.video_path.name}",
         fontsize=16,
     )
+    if last_im is not None:
+        fig.colorbar(last_im, ax=axes[2].tolist(), fraction=0.02, pad=0.01)
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
 
@@ -1172,9 +1220,10 @@ def main() -> None:
         raise ValueError("No models selected.")
 
     save_reference_frames(output_dir / "reference_frames", reference_sample)
-    plot_frame_pca_gallery(output_dir / "frame_pca_gallery.png", reference_sample, features_list)
     plot_temporal_similarity(output_dir / "temporal_similarity.png", features_list)
-    plot_spatial_heatmaps(output_dir / "spatial_change_heatmaps.png", features_list, args.max_heatmaps)
+    for item in features_list:
+        prefix = item.name.lower()
+        plot_frame_pca_heatmap_overview(output_dir / f"{prefix}_frame_pca_heatmap.png", reference_sample, item)
     save_features_npz(output_dir / "temporal_features.npz", features_list)
     print_summary(features_list, output_dir)
 
