@@ -9,8 +9,8 @@ The script extracts time-aligned embeddings from:
 
 For each tokenizer it generates:
 1. A temporal self-similarity matrix
-2. Adjacent-step feature change curves
-3. A 2D PCA trajectory of the video embedding over time
+2. A frame-aligned PCA visualization of spatial tokens
+3. Saved raw reference frames
 4. Spatial token change heatmaps between adjacent time steps
 
 Example:
@@ -54,6 +54,7 @@ for extra_path in (DINOV3_ROOT, VJEPA2_ROOT):
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
 DEFAULT_MODELS = ("jepa", "dino", "qwenvit")
+JEPA_FAMILIES = ("auto", "vjepa2", "vjepa2_1")
 
 
 def _default_existing_dir(path: Path) -> Optional[str]:
@@ -89,6 +90,59 @@ def is_local_dir_model_ref(model_ref: Optional[str]) -> bool:
         return False
     path = Path(model_ref).expanduser()
     return path.exists() and path.is_dir()
+
+
+def infer_jepa_family(args: argparse.Namespace) -> str:
+    if args.jepa_family != "auto":
+        return args.jepa_family
+    if not args.jepa_checkpoint:
+        return "vjepa2"
+    checkpoint_name = Path(args.jepa_checkpoint).name
+    return "vjepa2_1" if "vjepa2_1" in checkpoint_name else "vjepa2"
+
+
+def infer_jepa_arch(checkpoint_name: str, family: str) -> str:
+    if family == "vjepa2_1":
+        if "_vitG_" in checkpoint_name:
+            return "vit_gigantic_xformers"
+        if "_vitg_" in checkpoint_name:
+            return "vit_giant_xformers"
+        if "_vitl_" in checkpoint_name:
+            return "vit_large"
+        if "_vitb_" in checkpoint_name:
+            return "vit_base"
+        return "vit_large"
+
+    checkpoint_name = checkpoint_name.lower()
+    if "vitg" in checkpoint_name:
+        return "vit_giant_xformers_rope"
+    if "vith" in checkpoint_name:
+        return "vit_huge_rope"
+    return "vit_large_rope"
+
+
+def default_jepa_input_size(family: str) -> int:
+    return 384 if family == "vjepa2_1" else 256
+
+
+def default_jepa_short_side(input_size: int) -> int:
+    return int(256.0 / 224.0 * input_size)
+
+
+def resolve_jepa_config(args: argparse.Namespace) -> Dict[str, Any]:
+    family = infer_jepa_family(args)
+    checkpoint_name = Path(args.jepa_checkpoint).name if args.jepa_checkpoint else ""
+    arch = args.jepa_arch or infer_jepa_arch(checkpoint_name, family)
+    checkpoint_key = args.jepa_checkpoint_key or ("ema_encoder" if family == "vjepa2_1" else "target_encoder")
+    input_size = args.jepa_input_size or default_jepa_input_size(family)
+    short_side = args.jepa_short_side or default_jepa_short_side(input_size)
+    return {
+        "family": family,
+        "arch": arch,
+        "checkpoint_key": checkpoint_key,
+        "input_size": input_size,
+        "short_side": short_side,
+    }
 
 
 @dataclass
@@ -183,15 +237,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dino-short-side", type=int, default=256)
     parser.add_argument("--dino-num-frames", type=int, default=16)
 
-    parser.add_argument("--jepa-arch", type=str, default="vit_large_rope")
+    parser.add_argument(
+        "--jepa-family",
+        type=str,
+        default="auto",
+        choices=list(JEPA_FAMILIES),
+        help="Which JEPA implementation to use for raw .pt checkpoints. 'auto' infers from the checkpoint path.",
+    )
+    parser.add_argument(
+        "--jepa-arch",
+        type=str,
+        default=None,
+        help="Optional raw PyTorch JEPA architecture override. If omitted, the script infers a matching arch.",
+    )
     parser.add_argument(
         "--jepa-checkpoint",
         type=str,
         default=DEFAULT_JEPA_REF,
         help="Path to a JEPA .pt checkpoint or a local HF V-JEPA model directory.",
     )
-    parser.add_argument("--jepa-input-size", type=int, default=256)
-    parser.add_argument("--jepa-short-side", type=int, default=292)
+    parser.add_argument(
+        "--jepa-checkpoint-key",
+        type=str,
+        default=None,
+        help="Optional raw checkpoint key override, e.g. target_encoder or ema_encoder.",
+    )
+    parser.add_argument("--jepa-input-size", type=int, default=None)
+    parser.add_argument("--jepa-short-side", type=int, default=None)
     parser.add_argument("--jepa-num-frames", type=int, default=16)
     parser.add_argument("--jepa-tubelet-size", type=int, default=2)
 
@@ -424,18 +496,6 @@ def distance_from_first(features: np.ndarray) -> np.ndarray:
     return 1.0 - cosine
 
 
-def pca_2d(features: np.ndarray) -> np.ndarray:
-    x = features - features.mean(axis=0, keepdims=True)
-    if x.shape[0] == 1:
-        return np.zeros((1, 2), dtype=np.float32)
-    _, _, vt = np.linalg.svd(x, full_matrices=False)
-    comp = min(2, vt.shape[0])
-    proj = x @ vt[:comp].T
-    if comp == 1:
-        proj = np.concatenate([proj, np.zeros_like(proj)], axis=1)
-    return proj.astype(np.float32)
-
-
 def compute_spatial_change_maps(token_maps: np.ndarray) -> np.ndarray:
     diffs = token_maps[1:] - token_maps[:-1]
     return np.linalg.norm(diffs, axis=-1)
@@ -453,24 +513,65 @@ def summarize_features(features: np.ndarray) -> Dict[str, float]:
     }
 
 
-def _load_jepa_state_dict(checkpoint_path: Path) -> Dict[str, torch.Tensor]:
+def _load_jepa_state_dict(
+    checkpoint_path: Path,
+    preferred_key: Optional[str] = None,
+) -> Dict[str, torch.Tensor]:
     checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
     if not isinstance(checkpoint, dict):
         raise ValueError(f"Unexpected checkpoint format in {checkpoint_path}.")
-    if "encoder" in checkpoint:
-        state_dict = checkpoint["encoder"]
-    elif "target_encoder" in checkpoint:
-        state_dict = checkpoint["target_encoder"]
-    elif "ema_encoder" in checkpoint:
-        state_dict = checkpoint["ema_encoder"]
-    else:
-        state_dict = checkpoint
+
+    candidate_keys: List[str] = []
+    if preferred_key:
+        candidate_keys.append(preferred_key)
+    candidate_keys.extend(["target_encoder", "ema_encoder", "encoder"])
+
+    state_dict = checkpoint
+    for key in candidate_keys:
+        if key in checkpoint:
+            state_dict = checkpoint[key]
+            break
 
     cleaned = {}
     for key, value in state_dict.items():
         key = key.replace("module.", "").replace("backbone.", "")
         cleaned[key] = value
     return cleaned
+
+
+def _build_raw_jepa_model(
+    jepa_cfg: Dict[str, Any],
+    num_frames: int,
+    tubelet_size: int,
+):
+    if jepa_cfg["family"] == "vjepa2_1":
+        from app.vjepa_2_1.models import vision_transformer as vit_encoder
+
+        model_kwargs = dict(
+            img_size=(jepa_cfg["input_size"], jepa_cfg["input_size"]),
+            num_frames=num_frames,
+            tubelet_size=tubelet_size,
+            patch_size=16,
+            uniform_power=True,
+            img_temporal_dim_size=1,
+            interpolate_rope=True,
+        )
+        if not jepa_cfg["arch"].endswith("_rope"):
+            model_kwargs["use_rope"] = True
+    else:
+        from src.models import vision_transformer as vit_encoder
+
+        model_kwargs = dict(
+            img_size=(jepa_cfg["input_size"], jepa_cfg["input_size"]),
+            num_frames=num_frames,
+            tubelet_size=tubelet_size,
+        )
+
+    if not hasattr(vit_encoder, jepa_cfg["arch"]):
+        raise ValueError(f"Unknown JEPA architecture: {jepa_cfg['arch']}")
+
+    model = getattr(vit_encoder, jepa_cfg["arch"])(**model_kwargs)
+    return model
 
 
 def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_path: Path) -> TemporalFeatures:
@@ -547,11 +648,7 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
             },
         )
 
-    from src.models import vision_transformer as vit_encoder
-
-    if not hasattr(vit_encoder, args.jepa_arch):
-        raise ValueError(f"Unknown JEPA architecture: {args.jepa_arch}")
-
+    jepa_cfg = resolve_jepa_config(args)
     sample = sample_video_uniform(video_path, args.jepa_num_frames)
     if sample.frames.shape[0] % args.jepa_tubelet_size != 0:
         target = (sample.frames.shape[0] // args.jepa_tubelet_size) * args.jepa_tubelet_size
@@ -562,17 +659,26 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
 
     clip = preprocess_video_clip(
         sample.frames,
-        short_side=args.jepa_short_side,
-        crop_size=args.jepa_input_size,
+        short_side=jepa_cfg["short_side"],
+        crop_size=jepa_cfg["input_size"],
     ).unsqueeze(0)
 
-    model = getattr(vit_encoder, args.jepa_arch)(
-        img_size=(args.jepa_input_size, args.jepa_input_size),
+    print(
+        "[JEPA] raw checkpoint config: "
+        f"family={jepa_cfg['family']} arch={jepa_cfg['arch']} "
+        f"checkpoint_key={jepa_cfg['checkpoint_key']} "
+        f"input_size={jepa_cfg['input_size']} short_side={jepa_cfg['short_side']}"
+    )
+    model = _build_raw_jepa_model(
+        jepa_cfg=jepa_cfg,
         num_frames=int(sample.frames.shape[0]),
         tubelet_size=args.jepa_tubelet_size,
     )
     if args.jepa_checkpoint:
-        state_dict = _load_jepa_state_dict(Path(args.jepa_checkpoint).expanduser().resolve())
+        state_dict = _load_jepa_state_dict(
+            Path(args.jepa_checkpoint).expanduser().resolve(),
+            preferred_key=jepa_cfg["checkpoint_key"],
+        )
         msg = model.load_state_dict(state_dict, strict=False)
         print(f"[JEPA] Loaded checkpoint with message: {msg}")
     else:
@@ -584,8 +690,8 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
 
     tokens = tokens[0].detach().cpu()
     t_steps = sample.frames.shape[0] // args.jepa_tubelet_size
-    h_tokens = args.jepa_input_size // model.patch_size
-    w_tokens = args.jepa_input_size // model.patch_size
+    h_tokens = jepa_cfg["input_size"] // model.patch_size
+    w_tokens = jepa_cfg["input_size"] // model.patch_size
     tokens = tokens.view(t_steps, h_tokens, w_tokens, -1)
     time_embeddings = tokens.mean(dim=(1, 2)).numpy()
     token_maps = tokens.numpy()
@@ -598,7 +704,11 @@ def extract_jepa_features(args: argparse.Namespace, device: torch.device, video_
         timestamps=time_timestamps,
         summary=summarize_features(time_embeddings),
         metadata={
-            "input_size": args.jepa_input_size,
+            "family": jepa_cfg["family"],
+            "arch": jepa_cfg["arch"],
+            "checkpoint_key": jepa_cfg["checkpoint_key"],
+            "input_size": jepa_cfg["input_size"],
+            "short_side": jepa_cfg["short_side"],
             "tubelet_size": args.jepa_tubelet_size,
             "num_sampled_frames": int(sample.frames.shape[0]),
         },
@@ -851,83 +961,102 @@ def add_reference_frames_row(fig: Any, axes: Sequence[Any], sample: VideoSample)
         ax.set_title(f"{sample.timestamps[idx]:.2f}s", fontsize=9)
         ax.axis("off")
     if len(axes) > 0:
-        axes[0].set_ylabel("Reference\nframes", fontsize=10)
+        axes[0].set_ylabel("Original\nframes", fontsize=10)
 
 
-def plot_temporal_summary(
+def save_reference_frames(output_dir: Path, sample: VideoSample) -> None:
+    plt = get_matplotlib_pyplot()
+    ensure_dir(output_dir)
+    for idx, frame in enumerate(sample.frames):
+        timestamp = float(sample.timestamps[idx]) if idx < len(sample.timestamps) else float(idx)
+        frame_name = f"frame_{idx:03d}_{timestamp:07.3f}s.png"
+        plt.imsave(output_dir / frame_name, to_uint8_frame(frame))
+
+
+def project_token_maps_to_rgb(token_maps: np.ndarray) -> np.ndarray:
+    flat = token_maps.reshape(-1, token_maps.shape[-1]).astype(np.float32)
+    flat = flat - flat.mean(axis=0, keepdims=True)
+    if flat.shape[0] == 1:
+        proj = np.zeros((1, 3), dtype=np.float32)
+    else:
+        _, _, vt = np.linalg.svd(flat, full_matrices=False)
+        comp = min(3, vt.shape[0])
+        proj = flat @ vt[:comp].T
+        if comp < 3:
+            proj = np.pad(proj, ((0, 0), (0, 3 - comp)))
+
+    proj = proj.reshape(*token_maps.shape[:3], 3)
+    lower = np.percentile(proj, 1.0, axis=(0, 1, 2), keepdims=True)
+    upper = np.percentile(proj, 99.0, axis=(0, 1, 2), keepdims=True)
+    scale = np.where(upper > lower, upper - lower, 1.0)
+    proj = np.clip((proj - lower) / scale, 0.0, 1.0)
+    return proj.astype(np.float32)
+
+
+def align_timestamps(reference_timestamps: np.ndarray, target_timestamps: np.ndarray) -> np.ndarray:
+    if len(target_timestamps) == 0:
+        return np.zeros(len(reference_timestamps), dtype=int)
+    deltas = np.abs(reference_timestamps[:, None] - target_timestamps[None, :])
+    return deltas.argmin(axis=1).astype(int)
+
+
+def plot_frame_pca_gallery(
     output_path: Path,
     reference_sample: VideoSample,
     features_list: Sequence[TemporalFeatures],
 ) -> None:
     plt = get_matplotlib_pyplot()
+    cols = len(reference_sample.frames)
     rows = len(features_list) + 1
-    fig, axes = plt.subplots(rows, 4, figsize=(18, 4 * rows), constrained_layout=True)
-    if rows == 1:
-        axes = np.expand_dims(axes, 0)
+    fig, axes = plt.subplots(rows, cols, figsize=(2.7 * cols, 2.7 * rows), constrained_layout=True)
+    if rows == 1 and cols == 1:
+        axes = np.asarray([[axes]])
+    elif rows == 1:
+        axes = np.expand_dims(np.asarray(axes), 0)
+    elif cols == 1:
+        axes = np.expand_dims(np.asarray(axes), 1)
 
     add_reference_frames_row(fig, axes[0], reference_sample)
 
     for row_idx, item in enumerate(features_list, start=1):
-        similarity = cosine_similarity_matrix(item.time_embeddings)
-        adjacent = adjacent_cosine_deltas(item.time_embeddings)
-        drift = distance_from_first(item.time_embeddings)
-        proj = pca_2d(item.time_embeddings)
+        pca_maps = project_token_maps_to_rgb(item.token_maps)
+        aligned_indices = align_timestamps(reference_sample.timestamps, item.timestamps)
+        for col_idx, ax in enumerate(axes[row_idx]):
+            token_idx = int(aligned_indices[col_idx])
+            ax.imshow(pca_maps[token_idx], interpolation="nearest")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_xlabel(f"{item.timestamps[token_idx]:.2f}s", fontsize=9)
+            if col_idx == 0:
+                ax.set_ylabel(f"{item.name}\nPCA", fontsize=10)
 
-        ax = axes[row_idx, 0]
+    fig.suptitle(
+        f"Original frames and frame-aligned PCA token maps\nVideo: {reference_sample.video_path.name}",
+        fontsize=16,
+    )
+    fig.savefig(output_path, dpi=220)
+    plt.close(fig)
+
+
+def plot_temporal_similarity(
+    output_path: Path,
+    features_list: Sequence[TemporalFeatures],
+) -> None:
+    plt = get_matplotlib_pyplot()
+    rows = len(features_list)
+    fig, axes = plt.subplots(rows, 1, figsize=(6.0, 5.5 * rows), constrained_layout=True)
+    if rows == 1:
+        axes = [axes]
+
+    for ax, item in zip(axes, features_list):
+        similarity = cosine_similarity_matrix(item.time_embeddings)
         im = ax.imshow(similarity, vmin=-1.0, vmax=1.0, cmap="magma")
         ax.set_title(f"{item.name}: temporal similarity")
         ax.set_xlabel("time index")
         ax.set_ylabel("time index")
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        ax = axes[row_idx, 1]
-        x_adj = item.timestamps[1:] if len(item.timestamps) > 1 else np.asarray([])
-        ax.plot(x_adj, adjacent, marker="o", linewidth=1.8, label="adjacent delta")
-        ax.plot(item.timestamps, drift, marker="s", linewidth=1.3, label="distance from first")
-        ax.set_title(
-            f"{item.name}: temporal change\nmean adj={item.summary['mean_adjacent_delta']:.4f}"
-        )
-        ax.set_xlabel("time (s)")
-        ax.set_ylabel("1 - cosine")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=8)
-
-        ax = axes[row_idx, 2]
-        ax.plot(proj[:, 0], proj[:, 1], marker="o", linewidth=1.8)
-        for idx, (x, y) in enumerate(proj):
-            ax.text(x, y, str(idx), fontsize=8)
-        ax.set_title(f"{item.name}: PCA trajectory")
-        ax.set_xlabel("PC1")
-        ax.set_ylabel("PC2")
-        ax.grid(alpha=0.3)
-
-        ax = axes[row_idx, 3]
-        stats_text = "\n".join(
-            [
-                f"steps: {int(item.summary['num_steps'])}",
-                f"mean adjacent delta: {item.summary['mean_adjacent_delta']:.4f}",
-                f"max adjacent delta: {item.summary['max_adjacent_delta']:.4f}",
-                f"mean drift from first: {item.summary['mean_distance_from_first']:.4f}",
-                f"max drift from first: {item.summary['max_distance_from_first']:.4f}",
-            ]
-        )
-        metadata_text = "\n".join(f"{k}: {v}" for k, v in item.metadata.items())
-        ax.text(
-            0.0,
-            1.0,
-            stats_text + "\n\n" + metadata_text,
-            va="top",
-            ha="left",
-            fontsize=10,
-            family="monospace",
-        )
-        ax.axis("off")
-        ax.set_title(f"{item.name}: summary")
-
-    fig.suptitle(
-        f"Temporal sensitivity of visual tokenizers\nVideo: {reference_sample.video_path.name}",
-        fontsize=16,
-    )
+    fig.suptitle("Temporal self-similarity matrices", fontsize=16)
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
 
@@ -1024,7 +1153,9 @@ def main() -> None:
     if not features_list:
         raise ValueError("No models selected.")
 
-    plot_temporal_summary(output_dir / "temporal_summary.png", reference_sample, features_list)
+    save_reference_frames(output_dir / "reference_frames", reference_sample)
+    plot_frame_pca_gallery(output_dir / "frame_pca_gallery.png", reference_sample, features_list)
+    plot_temporal_similarity(output_dir / "temporal_similarity.png", features_list)
     plot_spatial_heatmaps(output_dir / "spatial_change_heatmaps.png", features_list, args.max_heatmaps)
     save_features_npz(output_dir / "temporal_features.npz", features_list)
     print_summary(features_list, output_dir)
