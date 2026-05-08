@@ -42,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 DINOV3_ROOT = REPO_ROOT / "dinov3"
 VJEPA2_ROOT = REPO_ROOT / "vjepa2"
 QWEN_FINETUNE_ROOT = REPO_ROOT / "Qwen3-VL" / "qwen-vl-finetune"
+QWEN_VL_UTILS_ROOT = REPO_ROOT / "Qwen3-VL" / "qwen-vl-utils" / "src"
 LOCAL_FACEBOOK_ROOT = REPO_ROOT / "facebook"
 LOCAL_QWEN_ROOT = REPO_ROOT / "Qwen"
 
@@ -178,6 +179,7 @@ class TemporalFeatures:
     timestamps: np.ndarray
     summary: Dict[str, float]
     metadata: Dict[str, Any]
+    reference_sample: Optional[VideoSample] = None
 
 
 class TeeStream:
@@ -904,6 +906,138 @@ def _infer_qwen_token_map_shape(
     return t, spatial_tokens, 1
 
 
+def _convert_qwen_video_to_sample(
+    video_path: Path,
+    video: Any,
+    video_metadata: Dict[str, Any],
+) -> VideoSample:
+    if isinstance(video, torch.Tensor):
+        video_tensor = video.detach().cpu()
+        if video_tensor.ndim != 4:
+            raise ValueError(f"Expected Qwen processed video to have shape [T, C, H, W], got {tuple(video_tensor.shape)}")
+        frames = video_tensor.permute(0, 2, 3, 1).numpy()
+    else:
+        frames = np.asarray(video)
+        if frames.ndim != 4:
+            raise ValueError(f"Expected Qwen processed video frames to have shape [T, H, W, C], got {frames.shape}")
+
+    frames = np.clip(frames, 0, 255).astype(np.uint8)
+    fps = float(video_metadata.get("fps", 0.0))
+    frame_indices = np.asarray(video_metadata.get("frames_indices", list(range(len(frames)))), dtype=np.float32)
+    if len(frame_indices) != len(frames):
+        frame_indices = np.linspace(0, max(len(frames) - 1, 0), len(frames), dtype=np.float32)
+    timestamps = frame_indices / max(fps, 1e-6) if fps > 0 else frame_indices.astype(np.float32)
+    total_frames = int(video_metadata.get("total_num_frames", len(frames)))
+    return VideoSample(
+        video_path=video_path,
+        frames=frames,
+        timestamps=timestamps.astype(np.float32),
+        fps=fps,
+        total_frames=total_frames,
+    )
+
+
+def _prepare_qwen_video_inputs(
+    processor: Any,
+    video_path: Path,
+    force_frames: Optional[int] = None,
+) -> Dict[str, Any]:
+    image_patch_size = int(getattr(getattr(processor, "image_processor", processor), "patch_size", 16))
+
+    if QWEN_VL_UTILS_ROOT.exists():
+        qwen_utils_path = str(QWEN_VL_UTILS_ROOT)
+        if qwen_utils_path not in sys.path:
+            sys.path.insert(0, qwen_utils_path)
+        try:
+            from qwen_vl_utils import process_vision_info
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video",
+                            "video": str(video_path),
+                            **({"nframes": force_frames} if force_frames is not None else {}),
+                        },
+                        {"type": "text", "text": ""},
+                    ],
+                }
+            ]
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                messages,
+                image_patch_size=image_patch_size,
+                return_video_kwargs=True,
+                return_video_metadata=True,
+            )
+
+            video_metadatas = None
+            reference_sample = None
+            if video_inputs is not None:
+                videos, video_metadatas = zip(*video_inputs)
+                videos = list(videos)
+                video_metadatas = list(video_metadatas)
+                reference_sample = _convert_qwen_video_to_sample(video_path, videos[0], video_metadatas[0])
+            else:
+                videos = None
+
+            inputs = processor(
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                return_tensors="pt",
+                do_resize=False,
+                **video_kwargs,
+            )
+            pixel_values_videos = inputs.get("pixel_values_videos", inputs.get("pixel_values"))
+            video_grid_thw = inputs.get("video_grid_thw")
+            if pixel_values_videos is None or video_grid_thw is None:
+                raise KeyError("Processor output is missing pixel_values_videos/pixel_values or video_grid_thw")
+
+            return {
+                "pixel_values_videos": pixel_values_videos,
+                "video_grid_thw": video_grid_thw,
+                "video_metadata": video_metadatas[0] if video_metadatas else {},
+                "reference_sample": reference_sample,
+                "pipeline": "qwen_vl_utils",
+            }
+        except Exception as exc:
+            print(f"[QwenViT] official qwen_vl_utils pipeline failed, falling back to processor.video_processor: {exc}")
+
+    vp_output = processor.video_processor(
+        videos=[str(video_path)],
+        return_tensors="pt",
+        return_metadata=True,
+    )
+    pixel_values_videos = vp_output.pixel_values_videos
+    video_grid_thw = vp_output.video_grid_thw
+    video_metadata = vp_output.video_metadata[0]
+
+    reference_sample = None
+    if "frames_indices" in video_metadata:
+        full_video = load_video(video_path)[0]
+        frame_indices = np.asarray(video_metadata["frames_indices"], dtype=int)
+        frame_indices = np.clip(frame_indices, 0, max(full_video.shape[0] - 1, 0))
+        sampled_frames = full_video[frame_indices]
+        fps = float(video_metadata.get("fps", 0.0))
+        timestamps = frame_indices.astype(np.float32) / max(fps, 1e-6) if fps > 0 else frame_indices.astype(np.float32)
+        reference_sample = VideoSample(
+            video_path=video_path,
+            frames=sampled_frames,
+            timestamps=timestamps.astype(np.float32),
+            fps=fps,
+            total_frames=int(video_metadata.get("total_num_frames", full_video.shape[0])),
+        )
+
+    return {
+        "pixel_values_videos": pixel_values_videos,
+        "video_grid_thw": video_grid_thw,
+        "video_metadata": video_metadata,
+        "reference_sample": reference_sample,
+        "pipeline": "processor.video_processor",
+    }
+
+
 def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, video_path: Path) -> TemporalFeatures:
     if not args.qwen_model_path:
         raise ValueError("--qwen-model-path is required when qwenvit is enabled.")
@@ -920,14 +1054,12 @@ def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, vid
         if hasattr(processor.video_processor, "max_frames"):
             processor.video_processor.max_frames = args.qwen_force_frames
 
-    vp_output = processor.video_processor(
-        videos=[str(video_path)],
-        return_tensors="pt",
-        return_metadata=True,
-    )
-    pixel_values_videos = vp_output.pixel_values_videos
-    video_grid_thw = vp_output.video_grid_thw
-    video_metadata = vp_output.video_metadata[0]
+    prepared = _prepare_qwen_video_inputs(processor, video_path, force_frames=args.qwen_force_frames)
+    pixel_values_videos = prepared["pixel_values_videos"]
+    video_grid_thw = prepared["video_grid_thw"]
+    video_metadata = prepared["video_metadata"]
+    reference_sample = prepared["reference_sample"]
+    pipeline = prepared["pipeline"]
 
     with torch.inference_mode():
         tokens = _call_qwen_visual(
@@ -943,6 +1075,15 @@ def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, vid
     t_steps, h_tokens, w_tokens = _infer_qwen_token_map_shape(tokens, video_grid_thw, merge_size)
     token_maps = tokens[0].view(t_steps, h_tokens, w_tokens, -1).numpy()
     time_embeddings = token_maps.mean(axis=(1, 2))
+    print(
+        "[QwenViT] "
+        f"pipeline={pipeline} "
+        f"pixel_values_videos_shape={tuple(pixel_values_videos.shape)} "
+        f"video_grid_thw={tuple(int(x) for x in video_grid_thw[0].tolist())} "
+        f"visual_tokens_shape={tuple(tokens.shape)} "
+        f"token_map_shape={tuple(token_maps.shape)} "
+        f"merge_size={merge_size}"
+    )
 
     if "frames_indices" in video_metadata and "fps" in video_metadata and video_metadata["fps"]:
         timestamps = np.asarray(video_metadata["frames_indices"], dtype=np.float32) / float(video_metadata["fps"])
@@ -962,10 +1103,17 @@ def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, vid
         timestamps=timestamps.astype(np.float32),
         summary=summarize_features(time_embeddings),
         metadata={
+            "pipeline": pipeline,
             "video_grid_thw": [int(x) for x in video_grid_thw[0].tolist()],
             "merge_size": int(merge_size),
+            "pixel_values_videos_shape": [int(x) for x in pixel_values_videos.shape],
+            "visual_tokens_shape": [int(x) for x in tokens.shape],
+            "token_map_shape": [int(x) for x in token_maps.shape],
+            "sampled_frame_count": int(len(video_metadata.get("frames_indices", []))),
+            "frames_indices": [int(x) for x in video_metadata.get("frames_indices", [])],
             "duration": float(video_metadata.get("duration", 0.0)),
         },
+        reference_sample=reference_sample,
     )
 
 
@@ -1060,24 +1208,25 @@ def plot_frame_pca_heatmap_overview(
     item: TemporalFeatures,
 ) -> None:
     plt = get_matplotlib_pyplot()
-    cols = len(reference_sample.frames)
+    display_sample = item.reference_sample or reference_sample
+    cols = len(display_sample.frames)
     rows = 3
     fig, axes = plt.subplots(rows, cols, figsize=(2.7 * cols, 8.2), constrained_layout=True)
     axes = np.asarray(axes)
     if axes.ndim == 1:
         axes = axes.reshape(rows, 1)
 
-    add_reference_frames_row(fig, axes[0], reference_sample)
+    add_reference_frames_row(fig, axes[0], display_sample)
 
     pca_maps = project_token_maps_to_rgb(item.token_maps)
-    pca_indices = align_timestamps(reference_sample.timestamps, item.timestamps)
+    pca_indices = align_timestamps(display_sample.timestamps, item.timestamps)
     change_maps = compute_spatial_change_maps(item.token_maps)
-    change_indices = align_change_map_timestamps(reference_sample.timestamps, item.timestamps)
+    change_indices = align_change_map_timestamps(display_sample.timestamps, item.timestamps)
     vmax = float(change_maps.max()) if change_maps.size else 1.0
     last_im = None
 
     for col_idx in range(cols):
-        target_frame = reference_sample.frames[col_idx]
+        target_frame = display_sample.frames[col_idx]
         target_hw = (int(target_frame.shape[0]), int(target_frame.shape[1]))
 
         pca_token_idx = int(pca_indices[col_idx])
@@ -1111,7 +1260,7 @@ def plot_frame_pca_heatmap_overview(
             heatmap_ax.set_ylabel(f"{item.name}\nHeatmap", fontsize=10)
 
     fig.suptitle(
-        f"{item.name}: original frames, PCA token maps, and spatial change heatmaps\nVideo: {reference_sample.video_path.name}",
+        f"{item.name}: original frames, PCA token maps, and spatial change heatmaps\nVideo: {display_sample.video_path.name}",
         fontsize=16,
     )
     if last_im is not None:
@@ -1239,6 +1388,8 @@ def main() -> None:
     plot_temporal_similarity(output_dir / "temporal_similarity.png", features_list)
     for item in features_list:
         prefix = item.name.lower()
+        if item.reference_sample is not None:
+            save_reference_frames(output_dir / f"{prefix}_reference_frames", item.reference_sample)
         plot_frame_pca_heatmap_overview(output_dir / f"{prefix}_frame_pca_heatmap.png", reference_sample, item)
     save_features_npz(output_dir / "temporal_features.npz", features_list)
     print_summary(features_list, output_dir)
