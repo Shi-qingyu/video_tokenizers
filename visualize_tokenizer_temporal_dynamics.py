@@ -56,6 +56,7 @@ IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3,
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
 DEFAULT_MODELS = ("jepa", "dino", "qwenvit")
 JEPA_FAMILIES = ("auto", "vjepa2", "vjepa2_1")
+DEFAULT_QWEN_FORCE_FRAMES = 16
 
 
 def _default_existing_dir(path: Path) -> Optional[str]:
@@ -160,6 +161,12 @@ def resolve_jepa_config(args: argparse.Namespace) -> Dict[str, Any]:
         "input_size": input_size,
         "short_side": short_side,
     }
+
+
+def resolve_qwen_force_frames(args: argparse.Namespace) -> int:
+    if args.qwen_force_frames is not None:
+        return args.qwen_force_frames
+    return DEFAULT_QWEN_FORCE_FRAMES
 
 
 @dataclass
@@ -295,7 +302,10 @@ def parse_args() -> argparse.Namespace:
         "--qwen-force-frames",
         type=int,
         default=None,
-        help="Override Qwen video_processor min/max_frames with a fixed frame count.",
+        help=(
+            "Override Qwen video frame sampling with a fixed frame count. "
+            f"If omitted, qwenvit defaults to {DEFAULT_QWEN_FORCE_FRAMES} frames."
+        ),
     )
     return parser.parse_args()
 
@@ -981,14 +991,19 @@ def _prepare_qwen_video_inputs(
             else:
                 videos = None
 
-            inputs = processor(
-                images=image_inputs,
-                videos=videos,
-                video_metadata=video_metadatas,
-                return_tensors="pt",
-                do_resize=False,
+            processor_kwargs: Dict[str, Any] = {
+                "return_tensors": "pt",
+                "do_resize": False,
                 **video_kwargs,
-            )
+            }
+            if image_inputs is not None:
+                processor_kwargs["images"] = image_inputs
+            if videos is not None:
+                processor_kwargs["videos"] = videos
+            if video_metadatas is not None:
+                processor_kwargs["video_metadata"] = video_metadatas
+
+            inputs = processor(**processor_kwargs)
             pixel_values_videos = inputs.get("pixel_values_videos", inputs.get("pixel_values"))
             video_grid_thw = inputs.get("video_grid_thw")
             if pixel_values_videos is None or video_grid_thw is None:
@@ -1048,13 +1063,14 @@ def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, vid
             sys.path.insert(0, qwen_path)
 
     model, processor = _load_qwen_model_and_processor(args.qwen_model_path, device)
-    if args.qwen_force_frames is not None and hasattr(processor, "video_processor"):
+    qwen_force_frames = resolve_qwen_force_frames(args)
+    if hasattr(processor, "video_processor"):
         if hasattr(processor.video_processor, "min_frames"):
-            processor.video_processor.min_frames = args.qwen_force_frames
+            processor.video_processor.min_frames = qwen_force_frames
         if hasattr(processor.video_processor, "max_frames"):
-            processor.video_processor.max_frames = args.qwen_force_frames
+            processor.video_processor.max_frames = qwen_force_frames
 
-    prepared = _prepare_qwen_video_inputs(processor, video_path, force_frames=args.qwen_force_frames)
+    prepared = _prepare_qwen_video_inputs(processor, video_path, force_frames=qwen_force_frames)
     pixel_values_videos = prepared["pixel_values_videos"]
     video_grid_thw = prepared["video_grid_thw"]
     video_metadata = prepared["video_metadata"]
@@ -1078,6 +1094,7 @@ def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, vid
     print(
         "[QwenViT] "
         f"pipeline={pipeline} "
+        f"force_frames={qwen_force_frames} "
         f"pixel_values_videos_shape={tuple(pixel_values_videos.shape)} "
         f"video_grid_thw={tuple(int(x) for x in video_grid_thw[0].tolist())} "
         f"visual_tokens_shape={tuple(tokens.shape)} "
@@ -1104,6 +1121,7 @@ def extract_qwenvit_features(args: argparse.Namespace, device: torch.device, vid
         summary=summarize_features(time_embeddings),
         metadata={
             "pipeline": pipeline,
+            "force_frames": int(qwen_force_frames),
             "video_grid_thw": [int(x) for x in video_grid_thw[0].tolist()],
             "merge_size": int(merge_size),
             "pixel_values_videos_shape": [int(x) for x in pixel_values_videos.shape],
