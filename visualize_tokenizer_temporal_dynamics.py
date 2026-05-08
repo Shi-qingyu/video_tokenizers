@@ -103,14 +103,30 @@ def infer_jepa_family(args: argparse.Namespace) -> str:
 
 def infer_jepa_arch(checkpoint_name: str, family: str) -> str:
     if family == "vjepa2_1":
-        if "_vitG_" in checkpoint_name:
-            return "vit_gigantic_xformers"
-        if "_vitg_" in checkpoint_name:
-            return "vit_giant_xformers"
+        stem = Path(checkpoint_name).stem
+        prefix = "vjepa2_1_"
+        if stem.startswith(prefix):
+            # Distilled checkpoints are named like:
+            # vjepa2_1_vitl_dist_vitG_384.pt
+            # The student arch is the first token after `vjepa2_1_`.
+            student_token = stem[len(prefix) :].split("_", 1)[0]
+            student_arch_map = {
+                "vitb": "vit_base",
+                "vitl": "vit_large",
+                "vitg": "vit_giant_xformers",
+                "vitG": "vit_gigantic_xformers",
+            }
+            if student_token in student_arch_map:
+                return student_arch_map[student_token]
+
         if "_vitl_" in checkpoint_name:
             return "vit_large"
         if "_vitb_" in checkpoint_name:
             return "vit_base"
+        if "_vitg_" in checkpoint_name:
+            return "vit_giant_xformers"
+        if "_vitG_" in checkpoint_name:
+            return "vit_gigantic_xformers"
         return "vit_large"
 
     checkpoint_name = checkpoint_name.lower()

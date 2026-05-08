@@ -19,4 +19,6 @@ python3 visualize_tokenizer_temporal_dynamics.py \
 #   --output-dir outputs/temporal_viz_jepa21 \
 #   --log-file outputs/temporal_viz_jepa21/run.log \
 #   --jepa-checkpoint /path/to/vjepa2_1_vitl_dist_vitG_384.pt \
+#   --jepa-arch vit_large \
+#   --jepa-checkpoint-key ema_encoder \
 #   --models jepa
