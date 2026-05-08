@@ -1,6 +1,7 @@
 data
 facebook
 Qwen
-
+outputs
 *.png
 *.npz
+*.pyc

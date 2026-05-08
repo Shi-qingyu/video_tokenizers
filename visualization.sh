@@ -1,4 +1,4 @@
-MODELS="dino"
+MODELS="qwenvit"
 
 python3 visualize_tokenizer_temporal_dynamics.py \
   --annotation-path data/train_t_polished_v3.json \
@@ -18,7 +18,7 @@ python3 visualize_tokenizer_temporal_dynamics.py \
 #   --sample-index 1 \
 #   --output-dir outputs/temporal_viz_jepa21 \
 #   --log-file outputs/temporal_viz_jepa21/run.log \
-#   --jepa-checkpoint /path/to/vjepa2_1_vitl_dist_vitG_384.pt \
+#   --jepa-checkpoint facebook/vjepa2_1_vitl_dist_vitG_384.pt \
 #   --jepa-arch vit_large \
 #   --jepa-checkpoint-key ema_encoder \
 #   --models jepa
